@@ -21,11 +21,17 @@ export async function onRequestPost(context) {
         const telegramFormData = new FormData();
         telegramFormData.append("chat_id", env.TG_Chat_ID);
 
-        // 根据文件类型选择合适的上传方式
+        const compressionMode = formData.get('compressionMode') || 'compressed';
+
         let apiEndpoint;
         if (uploadFile.type.startsWith('image/')) {
-            telegramFormData.append("photo", uploadFile);
-            apiEndpoint = 'sendPhoto';
+            if (compressionMode === 'original') {
+                telegramFormData.append("document", uploadFile);
+                apiEndpoint = 'sendDocument';
+            } else {
+                telegramFormData.append("photo", uploadFile);
+                apiEndpoint = 'sendPhoto';
+            }
         } else if (uploadFile.type.startsWith('audio/')) {
             telegramFormData.append("audio", uploadFile);
             apiEndpoint = 'sendAudio';

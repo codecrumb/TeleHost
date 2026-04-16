@@ -565,7 +565,7 @@
         // 乐观更新收藏状态
         this.tableData[fileIndex].metadata.liked = !(this.tableData[fileIndex].metadata.liked ?? false);
         // 发送请求更新服务器数据
-        var requestOptions = { method: 'GET', redirect: 'follow', credentials: 'include' };
+        var requestOptions = { method: 'POST', redirect: 'follow', credentials: 'include' };
         fetch(`./api/manage/toggleLike/${name}`, requestOptions)
           .then(response => response.json())
           .then(result => {
@@ -587,7 +587,7 @@
           cancelButtonText: '取消',
           type: 'warning'
         }).then(() => {
-          fetch(`./api/manage/delete/${key}`, { method: 'GET', credentials: 'include' })
+          fetch(`./api/manage/delete/${key}`, { method: 'POST', credentials: 'include' })
             .then(response => response.ok ? this.tableData.splice(index, 1) : Promise.reject())
             .then(() => {
               this.updateStats();
@@ -624,7 +624,7 @@
           cancelButtonText: '取消',
           type: 'warning'
         }).then(() => {
-          const promises = this.selectedFiles.map(file => fetch(`./api/manage/delete/${file.name}`, { method: 'GET', credentials: 'include' }));
+          const promises = this.selectedFiles.map(file => fetch(`./api/manage/delete/${file.name}`, { method: 'POST', credentials: 'include' }));
 
           Promise.all(promises)
             .then(results => {
@@ -846,7 +846,7 @@
           }
         }).then(({ value }) => {
           fetch(`./api/manage/editName/${item.name}?newName=${encodeURIComponent(value)}`, {
-            method: 'GET',
+            method: 'POST',
             credentials: 'include'
           })
           .then(response => response.json())

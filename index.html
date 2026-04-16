@@ -195,8 +195,15 @@
       gap: 10px;
     }
 
-    .result-url {
+    .result-url-wrap {
       flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .result-url {
       font-size: 0.82rem;
       color: #9ac8ff;
       overflow: hidden;
@@ -206,6 +213,14 @@
     }
 
     .result-url:hover { text-decoration: underline; }
+
+    .result-url-original {
+      font-size: 0.72rem;
+      color: #555;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
 
     .copy-btn {
       flex-shrink: 0;
@@ -458,6 +473,8 @@
               addResult(window.location.origin + item.src);
             });
           }
+          // Note: addResult is async but we don't await it intentionally —
+          // each result item resolves its short URL independently in the background.
 
           showIdle();
         } catch (err) {
@@ -465,18 +482,47 @@
         }
       }
 
+      // ── URL shortener ──────────────────────────────────────────────────
+      async function shortenUrl(url) {
+        if (!url) return 'Long URL cannot be empty';
+        try {
+          const res = await fetch(
+            'https://tinyurl.com/api-create.php?url=' + encodeURIComponent(url)
+          );
+          const short = (await res.text()).trim();
+          if (!short || !short.startsWith('http')) return url;
+          return short;
+        } catch (_) {
+          return url; // network error — fall back to original
+        }
+      }
+
       // ── Result items ───────────────────────────────────────────────────
-      function addResult(url) {
+      async function addResult(url) {
         const item = document.createElement('div');
         item.className = 'result-item';
 
+        const wrap = document.createElement('div');
+        wrap.className = 'result-url-wrap';
+
         const link = document.createElement('a');
-        link.className    = 'result-url';
-        link.href         = url;
-        link.target       = '_blank';
-        link.rel          = 'noopener noreferrer';
-        link.textContent  = url;
-        link.title        = url;
+        link.className   = 'result-url';
+        link.href        = url;
+        link.target      = '_blank';
+        link.rel         = 'noopener noreferrer';
+        link.textContent = url;
+        link.title       = url;
+
+        const originalLabel = document.createElement('span');
+        originalLabel.className   = 'result-url-original';
+        originalLabel.textContent = url;
+        originalLabel.title       = url;
+
+        wrap.appendChild(link);
+        wrap.appendChild(originalLabel);
+
+        // Track which URL the copy button should use (short once resolved)
+        let copyUrl = url;
 
         const btn = document.createElement('button');
         btn.className   = 'copy-btn';
@@ -484,7 +530,7 @@
         btn.textContent = 'Copy';
 
         btn.addEventListener('click', function () {
-          navigator.clipboard.writeText(url).then(function () {
+          navigator.clipboard.writeText(copyUrl).then(function () {
             btn.textContent = 'Copied!';
             btn.classList.add('copied');
             setTimeout(function () {
@@ -494,7 +540,7 @@
           }).catch(function () {
             // Fallback for browsers without clipboard API
             const ta = document.createElement('textarea');
-            ta.value = url;
+            ta.value = copyUrl;
             ta.style.position = 'fixed';
             ta.style.opacity = '0';
             document.body.appendChild(ta);
@@ -510,9 +556,16 @@
           });
         });
 
-        item.appendChild(link);
+        item.appendChild(wrap);
         item.appendChild(btn);
         resultsEl.prepend(item);
+
+        // Resolve short URL and update the item
+        const short = await shortenUrl(url);
+        copyUrl          = short;
+        link.href        = short;
+        link.textContent = short;
+        link.title       = short;
       }
     })();
   </script>

@@ -484,17 +484,25 @@
 
       // ── URL shortener ──────────────────────────────────────────────────
       async function shortenUrl(url) {
-        if (!url) return 'Long URL cannot be empty';
-        try {
-          const res = await fetch(
-            'https://tinyurl.com/api-create.php?url=' + encodeURIComponent(url)
-          );
-          const short = (await res.text()).trim();
-          if (!short || !short.startsWith('http')) return url;
-          return short;
-        } catch (_) {
-          return url; // network error — fall back to original
+        if (!url) return url;
+
+        const encoded = encodeURIComponent(url);
+        const services = [
+          () => fetch('https://clck.ru/--?url=' + encoded).then(r => r.text()),
+          () => fetch('https://tinyurl.com/api-create.php?url=' + encoded).then(r => r.text()),
+          () => fetch('https://da.gd/shorten?url=' + encoded).then(r => r.text()),
+        ];
+
+        for (const call of services) {
+          try {
+            const short = (await call()).trim();
+            if (short && short.startsWith('http')) return short;
+          } catch (_) {
+            // try next service
+          }
         }
+
+        return url; // all services failed — fall back to original
       }
 
       // ── Result items ───────────────────────────────────────────────────

@@ -1,23 +1,22 @@
+// State-changing endpoint — restricted to POST to avoid CSRF-style requests
+// via simple GETs (images, prefetch, etc.).
 export async function onRequest(context) {
-    // Contents of context object
-    const {
-      request, // same as existing Worker API
-      env, // same as existing Worker API
-      params, // if filename includes [id] or [[path]]
-      waitUntil, // same as ctx.waitUntil in existing Worker API
-      next, // used for middleware or to fetch assets
-      data, // arbitrary space for passing data between middlewares
-    } = context;
-    console.log(env)
-    console.log(params.id)
-    //read the metadata
-    const value = await env.img_url.getWithMetadata(params.id);
-    console.log(value)
-    //"metadata":{"TimeStamp":19876541,"ListType":"None","rating_label":"None"}
-    //change the metadata
-    value.metadata.ListType = "White"
-    await env.img_url.put(params.id,"",{metadata: value.metadata});
-    const info = JSON.stringify(value.metadata);
-    return new Response(info);
+  const { request, env, params } = context;
 
+  if (request.method !== "POST") {
+    return new Response("Method Not Allowed", {
+      status: 405,
+      headers: { "Allow": "POST" },
+    });
   }
+
+  const value = await env.img_url.getWithMetadata(params.id);
+  if (!value || !value.metadata) {
+    return new Response(`Image metadata not found for ID: ${params.id}`, { status: 404 });
+  }
+  value.metadata.ListType = "White";
+  await env.img_url.put(params.id, "", { metadata: value.metadata });
+  return new Response(JSON.stringify(value.metadata), {
+    headers: { "Content-Type": "application/json" },
+  });
+}

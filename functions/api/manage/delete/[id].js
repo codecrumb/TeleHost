@@ -1,17 +1,17 @@
+// Destructive endpoint — restricted to POST/DELETE to prevent cross-site
+// requests (e.g. <img>, <link rel=prefetch>) from mutating state.
 export async function onRequest(context) {
-    // Contents of context object
-    const {
-      request, // same as existing Worker API
-      env, // same as existing Worker API
-      params, // if filename includes [id] or [[path]]
-      waitUntil, // same as ctx.waitUntil in existing Worker API
-      next, // used for middleware or to fetch assets
-      data, // arbitrary space for passing data between middlewares
-    } = context;
-    console.log(env)
-    console.log(params.id)
-    await env.img_url.delete(params.id);
-    const info = JSON.stringify(params.id);
-    return new Response(info);
+  const { request, env, params } = context;
 
+  if (request.method !== "POST" && request.method !== "DELETE") {
+    return new Response("Method Not Allowed", {
+      status: 405,
+      headers: { "Allow": "POST, DELETE" },
+    });
   }
+
+  await env.img_url.delete(params.id);
+  return new Response(JSON.stringify(params.id), {
+    headers: { "Content-Type": "application/json" },
+  });
+}

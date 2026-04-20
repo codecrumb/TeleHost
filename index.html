@@ -242,7 +242,18 @@
     .copy-btn.copied { border-color: #4caf50; color: #4caf50; }
 
     /* hidden file input */
-    #fileInput { display: none; }
+    #fileInput, #folderInput { display: none; }
+
+    .inline-link {
+      background: none;
+      border: none;
+      color: inherit;
+      font: inherit;
+      font-size: 0.95rem;
+      cursor: pointer;
+      text-decoration: underline;
+      padding: 0;
+    }
 
     /* retry link */
     .retry-link {
@@ -297,8 +308,8 @@
       </svg>
 
       <div class="idle-text">
-        <strong>Drag &amp; drop or paste files here</strong>
-        or click to browse
+        <strong>Drag &amp; drop files or folders here</strong>
+        click to browse &nbsp;·&nbsp; <button id="browseFolderBtn" type="button" class="inline-link">select folder</button>
       </div>
 
       <div class="seg-ctrl" id="segCtrl">
@@ -332,11 +343,13 @@
   <div id="results"></div>
 
   <input type="file" id="fileInput" multiple>
+  <input type="file" id="folderInput" webkitdirectory>
 
   <script>
     (function () {
       const dropzone      = document.getElementById('dropzone');
       const fileInput     = document.getElementById('fileInput');
+      const folderInput   = document.getElementById('folderInput');
       const stateIdle     = document.getElementById('state-idle');
       const stateUploading= document.getElementById('state-uploading');
       const stateError    = document.getElementById('state-error');
@@ -346,6 +359,8 @@
       const resultsEl     = document.getElementById('results');
       const hintEl        = document.getElementById('hint');
       const segCtrl       = document.getElementById('segCtrl');
+
+      const ZIP_SIZE_LIMIT = 45 * 1024 * 1024; // 45 MB — Telegram bot API limit is 50 MB
 
       const HINT_KEY  = 'th_hinted';
       const HINTS = {
@@ -432,6 +447,17 @@
         e.preventDefault();
         dragCounter = 0;
         dropzone.classList.remove('drag-over');
+
+        // Use the DataTransferItem entry API so we can detect and traverse folders.
+        // webkitGetAsEntry() must be called synchronously inside the event handler.
+        const items = e.dataTransfer.items ? Array.from(e.dataTransfer.items) : null;
+        if (items) {
+          const entries = items.map(i => i.webkitGetAsEntry()).filter(Boolean);
+          if (entries.some(en => en.isDirectory)) {
+            handleDroppedEntries(entries);
+            return;
+          }
+        }
         const files = Array.from(e.dataTransfer.files);
         if (files.length) handleFiles(files);
       });
@@ -454,6 +480,26 @@
         const files = Array.from(fileInput.files);
         if (files.length) handleFiles(files);
         fileInput.value = '';
+      });
+
+      // ── Folder picker ──────────────────────────────────────────────────
+      document.getElementById('browseFolderBtn').addEventListener('click', function (e) {
+        e.stopPropagation(); // don't trigger the dropzone click
+        folderInput.click();
+      });
+
+      folderInput.addEventListener('change', function () {
+        const files = Array.from(folderInput.files);
+        folderInput.value = '';
+        if (!files.length) return;
+        // webkitRelativePath is "FolderName/subdir/file.ext" — group by top-level dir
+        const byFolder = {};
+        for (const file of files) {
+          const topFolder = file.webkitRelativePath.split('/')[0];
+          if (!byFolder[topFolder]) byFolder[topFolder] = [];
+          byFolder[topFolder].push({ path: file.webkitRelativePath, file });
+        }
+        handleFolderGroups(byFolder);
       });
 
       // ── Paste ──────────────────────────────────────────────────────────
@@ -644,6 +690,104 @@
         link.textContent = short;
         link.title       = short;
       }
+      // ── Folder drop (entry API) ────────────────────────────────────────
+      async function handleDroppedEntries(entries) {
+        const filesToUpload = [];
+
+        for (const entry of entries) {
+          if (entry.isDirectory) {
+            showUploading('Reading ' + entry.name + '\u2026');
+            const collected = [];
+            await collectEntries(entry, '', collected);
+            if (!collected.length) continue;
+
+            const totalSize = collected.reduce(function (s, e) { return s + e.file.size; }, 0);
+            if (totalSize <= ZIP_SIZE_LIMIT) {
+              showUploading('Zipping ' + entry.name + '\u2026');
+              const zipFile = await makeZip(collected, entry.name);
+              filesToUpload.push(zipFile);
+            } else {
+              // Folder too large to zip — upload files individually
+              filesToUpload.push.apply(filesToUpload, collected.map(function (e) { return e.file; }));
+            }
+          } else {
+            // Regular file inside a mixed drop
+            const file = await new Promise(function (res, rej) { entry.file(res, rej); });
+            filesToUpload.push(file);
+          }
+        }
+
+        if (filesToUpload.length) handleFiles(filesToUpload);
+        else showIdle();
+      }
+
+      // Group entries from a webkitdirectory input and zip each folder
+      async function handleFolderGroups(byFolder) {
+        const filesToUpload = [];
+
+        for (const folderName of Object.keys(byFolder)) {
+          const entries = byFolder[folderName];
+          const totalSize = entries.reduce(function (s, e) { return s + e.file.size; }, 0);
+          if (totalSize <= ZIP_SIZE_LIMIT) {
+            showUploading('Zipping ' + folderName + '\u2026');
+            const zipFile = await makeZip(entries, folderName);
+            filesToUpload.push(zipFile);
+          } else {
+            filesToUpload.push.apply(filesToUpload, entries.map(function (e) { return e.file; }));
+          }
+        }
+
+        if (filesToUpload.length) handleFiles(filesToUpload);
+        else showIdle();
+      }
+
+      // Recursively collect { path, file } from a FileSystemEntry
+      async function collectEntries(entry, prefix, result) {
+        if (entry.isFile) {
+          const file = await new Promise(function (res, rej) { entry.file(res, rej); });
+          result.push({ path: prefix + entry.name, file: file });
+        } else if (entry.isDirectory) {
+          const reader = entry.createReader();
+          const children = await readAllDirEntries(reader);
+          for (const child of children) {
+            await collectEntries(child, prefix + entry.name + '/', result);
+          }
+        }
+      }
+
+      // reader.readEntries() returns batches of ≤100; loop until empty
+      function readAllDirEntries(reader) {
+        return new Promise(function (resolve, reject) {
+          var all = [];
+          function batch() {
+            reader.readEntries(function (entries) {
+              if (!entries.length) return resolve(all);
+              all.push.apply(all, entries);
+              batch();
+            }, reject);
+          }
+          batch();
+        });
+      }
+
+      // Create a zip File from { path, file }[] entries
+      async function makeZip(entries, folderName) {
+        if (typeof JSZip === 'undefined') {
+          await new Promise(function (res, rej) {
+            var s = document.createElement('script');
+            s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+            s.onload = res; s.onerror = rej;
+            document.head.appendChild(s);
+          });
+        }
+        var zip = new JSZip();
+        for (var i = 0; i < entries.length; i++) {
+          zip.file(entries[i].path, entries[i].file);
+        }
+        var blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+        return new File([blob], folderName + '.zip', { type: 'application/zip' });
+      }
+
     })();
   </script>
 </body>

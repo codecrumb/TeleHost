@@ -413,6 +413,12 @@
       const hintEl        = document.getElementById('hint');
       const segCtrl       = document.getElementById('segCtrl');
 
+      // Telegram lets bots upload 50 MB but download only 20 MB, so bigger files
+      // are split into parts this size and tied together by a small manifest file.
+      const CHUNK_SIZE = 19 * 1024 * 1024;
+      const MAX_FILE_SIZE = 1024 * 1024 * 1024; // 1 GB — the join page assembles in memory
+      const PART_RETRIES = 3;
+
       const ZIP_SIZE_LIMIT = 45 * 1024 * 1024; // 45 MB — Telegram bot API limit is 50 MB
 
       const HINT_KEY  = 'th_hinted';
@@ -584,20 +590,67 @@
         }
       }
 
+      async function postFile(file, mode) {
+        const fd = new FormData();
+        fd.append('file', file);
+        fd.append('compressionMode', mode);
+        const res = await fetch('/upload', { method: 'POST', body: fd });
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error((data && data.error) ? data.error : 'Server error (' + res.status + ')');
+        }
+        if (!Array.isArray(data) || !data[0] || !data[0].src) throw new Error('Unexpected server response');
+        return data[0];
+      }
+
+      async function postWithRetry(file, mode) {
+        let lastErr;
+        for (let i = 0; i < PART_RETRIES; i++) {
+          try {
+            return await postFile(file, mode);
+          } catch (err) {
+            lastErr = err;
+            await new Promise(function (r) { setTimeout(r, 1000 * (i + 1)); });
+          }
+        }
+        throw lastErr;
+      }
+
+      // Split a big file into parts, upload each as a document, then upload a
+      // manifest listing them. The manifest's /join link is what the user shares.
+      async function uploadChunked(file) {
+        const total = Math.ceil(file.size / CHUNK_SIZE);
+        const pad = String(total).length;
+        const parts = [];
+        for (let i = 0; i < total; i++) {
+          showUploading(file.name + ' (part ' + (i + 1) + ' of ' + total + ')');
+          const slice = file.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+          const label = String(i + 1).padStart(pad, '0');
+          const partFile = new File([slice], file.name + '.part' + label, { type: 'application/octet-stream' });
+          const item = await postWithRetry(partFile, 'original');
+          parts.push({ src: item.src, size: slice.size });
+        }
+        showUploading(file.name + ' (finishing)');
+        const manifest = { v: 1, name: file.name, size: file.size, type: file.type || '', parts: parts };
+        const manifestFile = new File([JSON.stringify(manifest)], file.name + '.manifest.json', { type: 'application/json' });
+        const item = await postWithRetry(manifestFile, 'original');
+        return '/join/' + item.src.replace('/file/', '');
+      }
+
       async function uploadFile(file) {
         showUploading(file.name);
 
-        const fd = new FormData();
-        fd.append('file', file);
-        fd.append('compressionMode', currentMode);
-
         try {
-          const res = await fetch('/upload', { method: 'POST', body: fd });
-          const data = await res.json();
+          if (file.size > MAX_FILE_SIZE) {
+            return { ok: false, error: 'File is too large (max 1 GB).' };
+          }
 
-          if (!res.ok) {
-            const errText = (data && data.error) ? data.error : 'Server error (' + res.status + ')';
-            return { ok: false, error: errText };
+          if (file.size > CHUNK_SIZE) {
+            const joinPath = await uploadChunked(file);
+            addResult(window.location.origin + joinPath, false);
+          } else {
+            const item = await postFile(file, currentMode);
+            addResult(window.location.origin + item.src, item.fallback);
           }
 
           // Dismiss hints permanently after first successful upload
@@ -606,19 +659,14 @@
             localStorage.setItem(HINT_KEY, '1');
             hintEl.classList.add('hidden');
           }
-
-          if (Array.isArray(data) && data.length > 0) {
-            data.forEach(function (item) {
-              addResult(window.location.origin + item.src, item.fallback);
-            });
-          }
           // Note: addResult is async but we don't await it intentionally —
           // each result item resolves its short URL independently in the background.
 
           showIdle();
           return { ok: true };
         } catch (err) {
-          return { ok: false, error: 'Network error — check your connection.' };
+          const isNetwork = err instanceof TypeError;
+          return { ok: false, error: isNetwork ? 'Network error — check your connection.' : err.message };
         }
       }
 

@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TeleHost – Download</title>
+  <link rel="icon" type="image/x-icon" href="/favicon.ico">
+  <link rel="icon" type="image/png" sizes="32x32" href="/assets/icons/favicon-32.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/assets/icons/apple-touch-icon.png">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0d0d0d; color: #e0e0e0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      min-height: 100vh; display: flex; flex-direction: column; align-items: center;
+      padding: 48px 16px 64px;
+    }
+    h1 { font-size: 2rem; font-weight: 700; letter-spacing: -0.5px; color: #fff; margin-bottom: 40px; }
+    .card {
+      width: 100%; max-width: 560px; background: #1a1a1a; border: 1px solid #2a2a2a;
+      border-radius: 16px; padding: 32px; display: flex; flex-direction: column; gap: 16px;
+    }
+    .name { color: #fff; font-size: 1.05rem; font-weight: 600; word-break: break-all; }
+    .status { color: #888; font-size: 0.9rem; }
+    .status.error { color: #ff6b6b; }
+    .bar { height: 6px; background: #2a2a2a; border-radius: 3px; overflow: hidden; }
+    .bar > div { height: 100%; width: 0; background: #4a9eff; transition: width 0.2s; }
+    button {
+      align-self: flex-start; padding: 8px 18px; font-size: 0.85rem; font-weight: 500;
+      border: 1px solid #444; border-radius: 8px; background: #fff; color: #000; cursor: pointer;
+    }
+    details { color: #888; font-size: 0.85rem; }
+    summary { cursor: pointer; }
+    pre {
+      margin-top: 10px; padding: 12px; background: #111; border-radius: 8px; color: #bbb;
+      font-size: 0.78rem; overflow-x: auto; white-space: pre-wrap; word-break: break-all;
+    }
+    pre a { color: #4a9eff; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <h1>TeleHost</h1>
+  <div class="card">
+    <div class="name" id="name">Loading…</div>
+    <div class="status" id="status"></div>
+    <div class="bar"><div id="fill"></div></div>
+    <button id="again" class="hidden" type="button">Download again</button>
+    <details id="manual" class="hidden">
+      <summary>Download the parts manually</summary>
+      <pre id="manualBody"></pre>
+    </details>
+  </div>
+
+  <script>
+    (function () {
+      var nameEl = document.getElementById('name');
+      var statusEl = document.getElementById('status');
+      var fillEl = document.getElementById('fill');
+      var againBtn = document.getElementById('again');
+      var manualEl = document.getElementById('manual');
+      var manualBody = document.getElementById('manualBody');
+      var savedBlob = null, savedName = '';
+
+      function fail(msg) {
+        statusEl.textContent = msg;
+        statusEl.classList.add('error');
+      }
+
+      // Only same-origin /file/ paths are allowed, so a crafted link can't make
+      // this page fetch from somewhere else.
+      function isFilePath(p) {
+        return typeof p === 'string' && /^\/file\/[A-Za-z0-9_.\-]+$/.test(p);
+      }
+
+      function save() {
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(savedBlob);
+        a.download = savedName;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(function () { URL.revokeObjectURL(a.href); }, 60000);
+      }
+
+      againBtn.addEventListener('click', save);
+
+      async function fetchRetry(url, tries) {
+        var last;
+        for (var i = 0; i < tries; i++) {
+          try {
+            var res = await fetch(url);
+            if (res.ok) return res;
+            last = new Error('HTTP ' + res.status);
+          } catch (e) { last = e; }
+          await new Promise(function (r) { setTimeout(r, 800 * (i + 1)); });
+        }
+        throw last;
+      }
+
+      async function run() {
+        // Link shape: /join/<manifestId>, e.g. /join/AgACAg....json
+        var id = decodeURIComponent(location.pathname.split('/')[2] || '');
+        var m = '/file/' + id;
+        if (!isFilePath(m) || !/\.json$/.test(id)) return fail('Invalid or missing download link.');
+
+        var manifest;
+        try {
+          manifest = await (await fetchRetry(m, 3)).json();
+        } catch (e) {
+          return fail('Could not load the file list. The link may be broken.');
+        }
+        if (!manifest || manifest.v !== 1 || !Array.isArray(manifest.parts) || !manifest.parts.length ||
+            !manifest.parts.every(function (p) { return isFilePath(p.src); })) {
+          return fail('This link is not a valid multi-part file.');
+        }
+
+        savedName = String(manifest.name || 'download').replace(/[\\/:*?"<>|\r\n]/g, '_');
+        nameEl.textContent = savedName;
+        document.title = savedName + ' – TeleHost';
+
+        var total = manifest.parts.length;
+        var blobs = [], bytes = 0;
+        for (var i = 0; i < total; i++) {
+          statusEl.textContent = 'Combining part ' + (i + 1) + ' of ' + total + '…';
+          try {
+            var blob = await (await fetchRetry(manifest.parts[i].src, 3)).blob();
+          } catch (e) {
+            showManual(manifest);
+            return fail('Part ' + (i + 1) + ' of ' + total + ' could not be downloaded.');
+          }
+          if (manifest.parts[i].size && blob.size !== manifest.parts[i].size) {
+            showManual(manifest);
+            return fail('Part ' + (i + 1) + ' of ' + total + ' has the wrong size.');
+          }
+          blobs.push(blob);
+          bytes += blob.size;
+          fillEl.style.width = ((i + 1) / total * 100) + '%';
+        }
+
+        if (manifest.size && bytes !== manifest.size) {
+          showManual(manifest);
+          return fail('The combined file has the wrong size.');
+        }
+
+        savedBlob = new Blob(blobs, { type: manifest.type || 'application/octet-stream' });
+        statusEl.textContent = 'Done — your download should start automatically.';
+        againBtn.classList.remove('hidden');
+        showManual(manifest);
+        save();
+      }
+
+      function showManual(manifest) {
+        manualBody.textContent = '';
+        manifest.parts.forEach(function (p, i) {
+          var a = document.createElement('a');
+          a.href = p.src;
+          a.textContent = location.origin + p.src;
+          manualBody.appendChild(a);
+          manualBody.appendChild(document.createTextNode('\n'));
+        });
+        manualBody.appendChild(document.createTextNode(
+          '\nSave the parts, then join them in the order above.\nmacOS/Linux:\n  cat part1 part2 part3 > "' + (manifest.name || 'file') + '"\n' +
+          'Windows:\n  copy /b part1+part2+part3 "' + (manifest.name || 'file') + '"'));
+        manualEl.classList.remove('hidden');
+      }
+
+      run();
+    })();
+  </script>
+</body>
+</html>

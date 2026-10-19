@@ -18,6 +18,10 @@ export async function onRequestPost(context) {
         if (!uploadFile) {
             throw new Error('No file uploaded');
         }
+        // Telegram bots can upload at most 50 MB; fail with a clear message.
+        if (uploadFile.size > 50 * 1024 * 1024) {
+            throw new Error('File exceeds the 50 MB Telegram upload limit');
+        }
 
         const fileName = uploadFile.name;
         const fileExtension = fileName.split('.').pop().toLowerCase();

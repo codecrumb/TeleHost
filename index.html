@@ -188,6 +188,47 @@
       margin-top: 20px;
     }
 
+    /* ── Upload history ── */
+    #history {
+      width: 100%;
+      max-width: 560px;
+      margin-top: 28px;
+      display: none;
+    }
+
+    #history.visible { display: block; }
+
+    .history-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 0.75rem;
+      color: #666;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+    }
+
+    #historyClear {
+      background: none;
+      border: none;
+      color: #666;
+      font-size: 1rem;
+      line-height: 1;
+      cursor: pointer;
+      padding: 2px 6px;
+    }
+
+    #historyClear:hover { color: #fff; }
+
+    #historyList {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    #historyList .result-item { padding: 8px 12px; }
+
     .result-item {
       background: #1a1a1a;
       border: 1px solid #2a2a2a;
@@ -342,6 +383,15 @@
   <!-- Results -->
   <div id="results"></div>
 
+  <!-- Upload history (persisted in localStorage) -->
+  <div id="history">
+    <div class="history-header">
+      <span>History</span>
+      <button id="historyClear" type="button" aria-label="Clear upload history" title="Clear history">&times;</button>
+    </div>
+    <div id="historyList"></div>
+  </div>
+
   <input type="file" id="fileInput" multiple>
   <input type="file" id="folderInput" webkitdirectory>
 
@@ -357,6 +407,9 @@
       const errorMsg      = document.getElementById('errorMsg');
       const retryBtn      = document.getElementById('retryBtn');
       const resultsEl     = document.getElementById('results');
+      const historyEl     = document.getElementById('history');
+      const historyListEl = document.getElementById('historyList');
+      const historyClear  = document.getElementById('historyClear');
       const hintEl        = document.getElementById('hint');
       const segCtrl       = document.getElementById('segCtrl');
 
@@ -646,38 +699,7 @@
 
         // Track which URL the copy button should use (short once resolved)
         let copyUrl = url;
-
-        const btn = document.createElement('button');
-        btn.className   = 'copy-btn';
-        btn.type        = 'button';
-        btn.textContent = 'Copy';
-
-        btn.addEventListener('click', function () {
-          navigator.clipboard.writeText(copyUrl).then(function () {
-            btn.textContent = 'Copied!';
-            btn.classList.add('copied');
-            setTimeout(function () {
-              btn.textContent = 'Copy';
-              btn.classList.remove('copied');
-            }, 2000);
-          }).catch(function () {
-            // Fallback for browsers without clipboard API
-            const ta = document.createElement('textarea');
-            ta.value = copyUrl;
-            ta.style.position = 'fixed';
-            ta.style.opacity = '0';
-            document.body.appendChild(ta);
-            ta.select();
-            document.execCommand('copy');
-            document.body.removeChild(ta);
-            btn.textContent = 'Copied!';
-            btn.classList.add('copied');
-            setTimeout(function () {
-              btn.textContent = 'Copy';
-              btn.classList.remove('copied');
-            }, 2000);
-          });
-        });
+        const btn = makeCopyButton(function () { return copyUrl; });
 
         item.appendChild(wrap);
         item.appendChild(btn);
@@ -689,7 +711,97 @@
         link.href        = short;
         link.textContent = short;
         link.title       = short;
+        saveToHistory(short);
       }
+
+      // ── Copy button ────────────────────────────────────────────────────
+      function makeCopyButton(getUrl) {
+        const btn = document.createElement('button');
+        btn.className   = 'copy-btn';
+        btn.type        = 'button';
+        btn.textContent = 'Copy';
+
+        function flash() {
+          btn.textContent = 'Copied!';
+          btn.classList.add('copied');
+          setTimeout(function () {
+            btn.textContent = 'Copy';
+            btn.classList.remove('copied');
+          }, 2000);
+        }
+
+        btn.addEventListener('click', function () {
+          navigator.clipboard.writeText(getUrl()).then(flash).catch(function () {
+            // Fallback for browsers without clipboard API
+            const ta = document.createElement('textarea');
+            ta.value = getUrl();
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+            flash();
+          });
+        });
+
+        return btn;
+      }
+
+      // ── Upload history (localStorage) ──────────────────────────────────
+      const HISTORY_KEY = 'th_history';
+      const HISTORY_MAX = 20;
+
+      function loadHistory() {
+        try {
+          const list = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
+          return Array.isArray(list) ? list : [];
+        } catch (_) {
+          return [];
+        }
+      }
+
+      function saveToHistory(url) {
+        const list = loadHistory().filter(function (e) { return e.url !== url; });
+        list.unshift({ url: url, ts: Date.now() });
+        try {
+          localStorage.setItem(HISTORY_KEY, JSON.stringify(list.slice(0, HISTORY_MAX)));
+        } catch (_) { /* storage unavailable — history just won't persist */ }
+      }
+
+      function renderHistory() {
+        const list = loadHistory();
+        historyListEl.textContent = '';
+        historyEl.classList.toggle('visible', list.length > 0);
+
+        list.forEach(function (entry) {
+          const item = document.createElement('div');
+          item.className = 'result-item';
+
+          const wrap = document.createElement('div');
+          wrap.className = 'result-url-wrap';
+
+          const link = document.createElement('a');
+          link.className   = 'result-url';
+          link.href        = entry.url;
+          link.target      = '_blank';
+          link.rel         = 'noopener noreferrer';
+          link.textContent = entry.url;
+          link.title       = entry.url;
+
+          wrap.appendChild(link);
+          item.appendChild(wrap);
+          item.appendChild(makeCopyButton(function () { return entry.url; }));
+          historyListEl.appendChild(item);
+        });
+      }
+
+      historyClear.addEventListener('click', function () {
+        try { localStorage.removeItem(HISTORY_KEY); } catch (_) {}
+        renderHistory();
+      });
+
+      renderHistory();
       // ── Folder drop (entry API) ────────────────────────────────────────
       async function handleDroppedEntries(entries) {
         const filesToUpload = [];

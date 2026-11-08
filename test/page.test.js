@@ -269,6 +269,65 @@ describe('upload page', function () {
         assert.strictEqual(opened, 1);
     });
 
+    describe('copy as Markdown / HTML / BBCode', function () {
+        let copied;
+
+        beforeEach(function () {
+            copied = [];
+            Object.defineProperty(window.navigator, 'clipboard', {
+                value: { writeText: async text => { copied.push(text); } },
+                configurable: true,
+            });
+        });
+
+        async function copyVia(row, label) {
+            const button = Array.from(row.querySelectorAll('.more-menu button')).find(b => b.textContent === label);
+            button.click();
+            await tick();
+            return copied[copied.length - 1];
+        }
+
+        async function addHistoryRow(src) {
+            pick('a.png');
+            await tick();
+            requests[requests.length - 1].ok(src);
+            await tick(30);
+            return document.querySelector('#historyList .result-item');
+        }
+
+        it('offers image snippets for an image link', async function () {
+            const row = await addHistoryRow('/file/IMG1.png');
+            const url = 'https://host.test/file/IMG1.png';
+            assert.strictEqual(await copyVia(row, 'Markdown'), `![](${url})`);
+            assert.strictEqual(await copyVia(row, 'HTML'), `<img src="${url}">`);
+            assert.strictEqual(await copyVia(row, 'BBCode'), `[img]${url}[/img]`);
+        });
+
+        it('offers link snippets for anything else, including /s/ links', async function () {
+            const row = await addHistoryRow('/s/ABCDEFGHIJKLMNOPQRSTUVWXYZ');
+            const url = 'https://host.test/s/ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+            assert.strictEqual(await copyVia(row, 'Markdown'), `[${url}](${url})`);
+            assert.strictEqual(await copyVia(row, 'HTML'), `<a href="${url}">${url}</a>`);
+            assert.strictEqual(await copyVia(row, 'BBCode'), `[url]${url}[/url]`);
+        });
+
+        it('escapes quotes and angle brackets so a URL cannot break out of the snippet', async function () {
+            window.close();
+            makePage({ shortener: 'custom', customShortener: 'https://short.example/s?u={url}' });
+            Object.defineProperty(window.navigator, 'clipboard', {
+                value: { writeText: async text => { copied.push(text); } },
+                configurable: true,
+            });
+            window.fetch = async () => ({ text: async () => 'https://short.example/a"><script>alert(1)</script>' });
+            const row = await addHistoryRow('/file/IMG1.png');
+            await tick(30);
+            const html = await copyVia(document.querySelector('#historyList .result-item'), 'HTML');
+            assert.ok(html.startsWith('<a href="https://short.example/a%22%3E%3Cscript%3E'), html);
+            assert.ok(!html.includes('<script>'));
+            assert.ok(row);
+        });
+    });
+
     describe('with power-user settings', function () {
         const finish = async (n) => {
             for (let i = 0; i < n; i++) {

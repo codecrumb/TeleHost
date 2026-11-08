@@ -427,6 +427,27 @@
       color: #c49a00;
     }
 
+
+    /* ── Copy-as menu ── */
+    details.more { position: relative; flex-shrink: 0; }
+    details.more > summary {
+      list-style: none; cursor: pointer; color: #777; font-size: 0.8rem; padding: 4px 6px;
+      border: 1px solid #333; border-radius: 6px; user-select: none;
+    }
+    details.more > summary::-webkit-details-marker { display: none; }
+    details.more > summary:hover, details.more[open] > summary { color: #fff; border-color: #777; }
+    details.more > summary:focus-visible { outline: 2px solid #4a9eff; outline-offset: 2px; }
+    .more-menu {
+      position: absolute; right: 0; top: calc(100% + 4px); z-index: 20; min-width: 120px;
+      background: #1a1a1a; border: 1px solid #333; border-radius: 8px; padding: 4px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); display: flex; flex-direction: column;
+    }
+    .more-menu button {
+      background: none; border: none; color: #ccc; font: inherit; font-size: 0.78rem;
+      text-align: left; padding: 6px 10px; border-radius: 5px; cursor: pointer;
+    }
+    .more-menu button:hover, .more-menu button:focus-visible { background: #2a2a2a; color: #fff; }
+
     /* ── History extras ── */
     .history-actions { display: flex; align-items: center; gap: 6px; }
     #historyCopyAll {
@@ -1376,6 +1397,62 @@
         return btn;
       }
 
+      // ── Copy as Markdown / HTML / BBCode ───────────────────────────────
+      // Images embed, everything else becomes a link; quotes and angle brackets are
+      // escaped so an odd URL cannot break out of the snippet.
+      function copyFormats(url) {
+        let pathname = '';
+        try { pathname = new URL(url).pathname; } catch (_) {}
+        const u = url.replace(/["<>]/g, encodeURIComponent);
+        return /\.(png|jpe?g|gif|webp|avif|apng|bmp)$/i.test(pathname)
+          ? [['Markdown', '![](' + u + ')'], ['HTML', '<img src="' + u + '">'], ['BBCode', '[img]' + u + '[/img]']]
+          : [['Markdown', '[' + u + '](' + u + ')'], ['HTML', '<a href="' + u + '">' + u + '</a>'], ['BBCode', '[url]' + u + '[/url]']];
+      }
+
+      function copyText(text) {
+        return navigator.clipboard.writeText(text).catch(function () {
+          const ta = document.createElement('textarea');
+          ta.value = text;
+          ta.style.position = 'fixed';
+          ta.style.opacity = '0';
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+        });
+      }
+
+      function makeFormatMenu(url) {
+        const menu = document.createElement('details');
+        menu.className = 'more';
+        const summary = document.createElement('summary');
+        summary.textContent = '\u25BE';
+        summary.title = 'Copy as…';
+        summary.setAttribute('aria-label', 'Copy as…');
+        const list = document.createElement('div');
+        list.className = 'more-menu';
+        copyFormats(url).forEach(function (format) {
+          const item = document.createElement('button');
+          item.type = 'button';
+          item.textContent = format[0];
+          item.addEventListener('click', function () {
+            copyText(format[1]).then(function () {
+              item.textContent = 'Copied!';
+              setTimeout(function () { item.textContent = format[0]; menu.open = false; }, 700);
+            });
+          });
+          list.appendChild(item);
+        });
+        menu.append(summary, list);
+        return menu;
+      }
+
+      document.addEventListener('click', function (e) {
+        document.querySelectorAll('details.more[open]').forEach(function (d) {
+          if (!d.contains(e.target)) d.open = false;
+        });
+      });
+
       // ── Upload history (localStorage) ──────────────────────────────────
       const HISTORY_KEY = 'th_history';
       // With history off (0) nothing is persisted: links stay in this list until
@@ -1448,6 +1525,7 @@
 
           item.appendChild(wrap);
           item.appendChild(makeCopyButton(function () { return entry.url; }));
+          item.appendChild(makeFormatMenu(entry.url));
           historyListEl.appendChild(item);
         });
       }

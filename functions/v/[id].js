@@ -1,4 +1,5 @@
-import { busyResponse, isRefererAllowed, servePage } from '../_lib/serve.js';
+import { busyResponse, hotlinkResponse, isRefererAllowed, servePage } from '../_lib/serve.js';
+import { ConfigError, verifyRenderLink } from '../_lib/manifest.js';
 import { htmlRenderEnabled } from '../_lib/options.js';
 import { RateLimitError, fetchTelegramFile, getFilePath, isValidFileId } from '../_lib/telegram.js';
 
@@ -30,24 +31,28 @@ export async function onRequest(context) {
         return await serve(context);
     } catch (error) {
         if (error instanceof RateLimitError) return busyResponse(error.retryAfter);
+        if (error instanceof ConfigError) return text(error.message, 500);
         throw error;
     }
 }
 
-// /v/<file_id>.html         -> the "External Content Notice" page
-// /v/<file_id>.html?open=1  -> the uploaded page itself, sandboxed
+// /v/<file_id>~<tag>.html         -> the "External Content Notice" page
+// /v/<file_id>~<tag>.html?open=1  -> the uploaded page itself, sandboxed
+// The tag is issued by /upload only for files whose uploader asked for this.
 async function serve({ request, env, params }) {
     if (request.method !== 'GET' && request.method !== 'HEAD') return text('Method not allowed', 405, { Allow: 'GET, HEAD' });
     // Off unless the operator turns it on: serving other people's pages is their call.
     if (!htmlRenderEnabled(env)) return text('Not found', 404);
 
     const url = new URL(request.url);
-    if (!isRefererAllowed(env, request, url)) return text('Hotlinking is not allowed on this deployment.', 403);
+    if (!isRefererAllowed(env, request, url)) return hotlinkResponse(request);
 
     const filename = String(params.id);
-    const fileId = filename.split('.')[0];
+    const [fileId, tag] = filename.split('.')[0].split('~');
     const extension = filename.split('.').pop().toLowerCase();
-    if (!isValidFileId(fileId) || !['html', 'htm'].includes(extension)) return text('Not found', 404);
+    if (!isValidFileId(fileId) || !['html', 'htm'].includes(extension) || !(await verifyRenderLink(env, fileId, tag))) {
+        return text('Not found', 404);
+    }
 
     if (!url.searchParams.has('open')) return servePage(env, request, 'view');
     if (!cameFromOurPage(request, url)) return Response.redirect(url.origin + url.pathname, 303);

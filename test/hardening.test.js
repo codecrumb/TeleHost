@@ -285,37 +285,56 @@ describe('link secret is checked before anything is stored', function () {
     });
 });
 
-describe('hotlink protection judges embeds, not people opening a link', function () {
-    const env = { ALLOWED_REFERERS: 'good.example,*.fine.example' };
+describe('hotlink protection (ALLOWED_REFERERS)', function () {
+    const strict = { ALLOWED_REFERERS: 'good.example,*.fine.example' };
+    const relaxed = { ...strict, ALLOW_LINK_CLICKS: 'true' };
     const url = new URL('https://host.test/s/abc');
-    const check = async headers => {
+    const check = async (env, headers) => {
         const { isRefererAllowed } = await import('../functions/_lib/serve.js');
         return isRefererAllowed(env, new Request(url, { headers }), url);
     };
 
-    it('lets a page load through whatever site the link was clicked on', async function () {
-        assert.strictEqual(await check({ 'Sec-Fetch-Dest': 'document', Referer: 'https://web.whatsapp.com/' }), true);
-        assert.strictEqual(await check({ 'Sec-Fetch-Dest': 'document', Referer: 'https://tinyurl.com/x' }), true);
+    it('by default judges every request, a plain click included', async function () {
+        assert.strictEqual(await check(strict, { 'Sec-Fetch-Dest': 'document', Referer: 'https://web.whatsapp.com/' }), false);
+        assert.strictEqual(await check(strict, { Referer: 'https://evil.example/page' }), false);
+        assert.strictEqual(await check(strict, { 'Sec-Fetch-Dest': 'image', Referer: 'https://evil.example/page' }), false);
     });
 
-    it('still blocks other sites embedding the file', async function () {
+    it('lets the allowlist, this deployment and referer-less requests through', async function () {
+        assert.strictEqual(await check(strict, { 'Sec-Fetch-Dest': 'document', Referer: 'https://good.example/page' }), true);
+        assert.strictEqual(await check(strict, { Referer: 'https://a.fine.example/page' }), true);
+        assert.strictEqual(await check(strict, { Referer: 'https://host.test/s/abc' }), true, 'own pages');
+        assert.strictEqual(await check(strict, { 'Sec-Fetch-Dest': 'document' }), true, 'typed or pasted link');
+        assert.strictEqual(await check({}, { Referer: 'https://anything.example/' }), true, 'feature off when unset');
+    });
+
+    it('ALLOW_LINK_CLICKS=true exempts page loads only; embeds are still blocked', async function () {
+        assert.strictEqual(await check(relaxed, { 'Sec-Fetch-Dest': 'document', Referer: 'https://web.whatsapp.com/' }), true);
         for (const dest of ['image', 'video', 'audio', 'iframe', 'script', 'embed', 'object', 'empty']) {
-            assert.strictEqual(await check({ 'Sec-Fetch-Dest': dest, Referer: 'https://evil.example/page' }), false, dest);
+            assert.strictEqual(await check(relaxed, { 'Sec-Fetch-Dest': dest, Referer: 'https://evil.example/page' }), false, dest);
         }
+        assert.strictEqual(await check(relaxed, { Referer: 'https://evil.example/page' }), false, 'no Fetch Metadata: plain Referer rule');
     });
 
-    it('keeps the plain Referer rule for browsers without Fetch Metadata, and the allowlist', async function () {
-        assert.strictEqual(await check({ Referer: 'https://evil.example/page' }), false);
-        assert.strictEqual(await check({ Referer: 'https://good.example/page' }), true);
-        assert.strictEqual(await check({ Referer: 'https://a.fine.example/page' }), true);
-        assert.strictEqual(await check({ Referer: 'https://host.test/s/abc' }), true, 'own pages');
-        assert.strictEqual(await check({}), true, 'no referer');
+    it('only the exact string "true" turns the exemption on', async function () {
+        for (const value of ['1', 'yes', 'TRUE ', 'false', '']) {
+            assert.strictEqual(await check({ ...strict, ALLOW_LINK_CLICKS: value }, { 'Sec-Fetch-Dest': 'document', Referer: 'https://x.example/' }), false, value);
+        }
+        assert.strictEqual(await check({ ...strict, ALLOW_LINK_CLICKS: 'TRUE' }, { 'Sec-Fetch-Dest': 'document', Referer: 'https://x.example/' }), true, 'case-insensitive');
     });
 
-    it('opening a /s/ link from a non-allowlisted site now shows the page instead of the hotlink message', async function () {
-        const e = { ...env, TG_Bot_Token: 'T:T', ASSETS: { fetch: async () => new Response('<html>unlock</html>') } };
+    it('the 403 names the site the request came from, and nothing else', async function () {
+        const { hotlinkResponse } = await import('../functions/_lib/serve.js');
+        const res = hotlinkResponse(new Request(url, { headers: { Referer: 'https://web.whatsapp.com/some/path?token=secret' } }));
+        assert.strictEqual(res.status, 403);
+        assert.strictEqual(await res.text(), 'Hotlinking is not allowed on this deployment. (opened from web.whatsapp.com)');
+        assert.strictEqual((await hotlinkResponse(new Request(url)).text()), 'Hotlinking is not allowed on this deployment.');
+    });
+
+    it('through /s: a click from an unlisted site gets the message, the flag lets it through, embeds stay blocked', async function () {
+        const base = { TG_Bot_Token: 'T:T', ASSETS: { fetch: async () => new Response('<html>unlock</html>') } };
         const { sealManifest } = await import('../functions/_lib/manifest.js');
-        const sealed = await sealManifest(e, { v: 1, parts: [{ fileId: 'P'.repeat(30), msgId: 1, size: 1 }], name: 'x', type: '', size: 1, exp: Date.now() + 60000 });
+        const sealed = await sealManifest(base, { v: 1, parts: [{ fileId: 'P'.repeat(30), msgId: 1, size: 1 }], name: 'x', type: '', size: 1, exp: Date.now() + 60000 });
         const realFetch = global.fetch;
         global.fetch = async u => String(u).includes('/getFile')
             ? Response.json({ ok: true, result: { file_path: 'documents/m.bin' } })
@@ -323,15 +342,20 @@ describe('hotlink protection judges embeds, not people opening a link', function
         try {
             const { onRequest } = await import('../functions/s/[id].js');
             const id = 'M'.repeat(30);
-            const open = headers => onRequest({ request: new Request(`https://host.test/s/${id}`, { headers }), env: e, params: { id } });
-            const navigation = await open({ 'Sec-Fetch-Dest': 'document', Referer: 'https://web.whatsapp.com/' });
-            assert.strictEqual(navigation.status, 200);
-            assert.match(await navigation.text(), /unlock/);
-            const embed = await open({ 'Sec-Fetch-Dest': 'iframe', Referer: 'https://evil.example/' });
-            assert.strictEqual(embed.status, 403);
+            const open = (env, headers) => onRequest({ request: new Request(`https://host.test/s/${id}`, { headers }), env: { ...base, ...env }, params: { id } });
+            const click = { 'Sec-Fetch-Dest': 'document', Referer: 'https://web.whatsapp.com/' };
+
+            const blocked = await open(strict, click);
+            assert.strictEqual(blocked.status, 403);
+            assert.match(await blocked.text(), /opened from web\.whatsapp\.com/);
+
+            const allowed = await open(relaxed, click);
+            assert.strictEqual(allowed.status, 200);
+            assert.match(await allowed.text(), /unlock/);
+
+            assert.strictEqual((await open(relaxed, { 'Sec-Fetch-Dest': 'iframe', Referer: 'https://evil.example/' })).status, 403);
         } finally {
             global.fetch = realFetch;
         }
     });
 });
-

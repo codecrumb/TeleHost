@@ -157,10 +157,42 @@ describe('big file end to end: encrypt, upload parts, finalize, download, decryp
             return viewer;
         }
 
-        it('smart (the default) downloads a file straight away', async function () {
-            const { doc, clicks } = await publishAndOpen('application/zip', 'bundle.zip');
+        async function unlockEncrypted(type, name, settings) {
+            const encryptor = await browserEncryptor()('pw');
+            const receipts = await uploadParts(['ab', 'cd'], encryptor.encrypt);
+            await finalize({ receipts, name, type, size: 4, enc: encryptor.params });
+            const viewer = await openViewer(settings);
+            await until(() => !viewer.doc.getElementById('form').classList.contains('hidden'));
+            viewer.doc.getElementById('password').value = 'pw';
+            viewer.doc.getElementById('form').dispatchEvent(new viewer.win.Event('submit', { cancelable: true }));
+            await until(() => !viewer.doc.getElementById('result').classList.contains('hidden'));
+            return viewer;
+        }
+
+        it('smart (the default) downloads a file right after a password is entered', async function () {
+            const { doc, clicks } = await unlockEncrypted('application/zip', 'bundle.zip');
             assert.deepStrictEqual(clicks, ['bundle.zip']);
             assert.strictEqual(doc.getElementById('status').textContent, 'Download started.');
+        });
+
+        it('smart shows a photo after a password unlock instead of downloading it', async function () {
+            const { doc, clicks } = await unlockEncrypted('image/png', 'pic.png');
+            assert.deepStrictEqual(clicks, []);
+            assert.ok(doc.querySelector('#previewBox img'));
+        });
+
+        it('smart never starts a download by itself for a link that needs no password', async function () {
+            const { doc, clicks } = await publishAndOpen('application/zip', 'bundle.zip');
+            assert.deepStrictEqual(clicks, [], 'merely opening a link must not download anything');
+            doc.getElementById('download').click();
+            assert.deepStrictEqual(clicks, ['bundle.zip']);
+        });
+
+        it('never leaves a password-unlocked file to the button too', async function () {
+            const { doc, clicks } = await unlockEncrypted('application/zip', 'bundle.zip', { autoDownload: 'never' });
+            assert.deepStrictEqual(clicks, []);
+            doc.getElementById('download').click();
+            assert.deepStrictEqual(clicks, ['bundle.zip']);
         });
 
         it('smart shows a photo instead of downloading it, and the button still works', async function () {
@@ -171,16 +203,9 @@ describe('big file end to end: encrypt, upload parts, finalize, download, decryp
             assert.deepStrictEqual(clicks, ['pic.png']);
         });
 
-        it('always downloads, even something it also previews', async function () {
+        it('always downloads, even something it also previews, and even without a password', async function () {
             const { clicks } = await publishAndOpen('image/png', 'pic.png', { autoDownload: 'always' });
             assert.deepStrictEqual(clicks, ['pic.png']);
-        });
-
-        it('never leaves it to the button', async function () {
-            const { doc, clicks } = await publishAndOpen('application/zip', 'bundle.zip', { autoDownload: 'never' });
-            assert.deepStrictEqual(clicks, []);
-            doc.getElementById('download').click();
-            assert.deepStrictEqual(clicks, ['bundle.zip']);
         });
     });
 });

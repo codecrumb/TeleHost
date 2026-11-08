@@ -1,13 +1,16 @@
 // ALLOWED_REFERERS is a comma-separated hostname allowlist ("example.com,*.example.org").
 // Empty referers (direct visits, curl, native apps) always pass, as does the
 // deployment's own origin; the feature is off when the var is unset.
-// Hotlink protection is about other sites EMBEDDING your files (images, video,
-// iframes...), not about people reading a link. A top-level page load always
-// carries the Referer of wherever the link was clicked (a web chat, a shortener,
-// a search page), so judging it by that would lock out the very people a link
-// was sent to. Browsers label such loads Sec-Fetch-Dest: document.
+// ALLOWED_REFERERS: only the listed sites may send people to, or embed, your
+// files. By default that covers EVERY request, a plain click on a link included,
+// because a page load carries the Referer of wherever the link was clicked (a web
+// chat, a shortener, a search page). ALLOW_LINK_CLICKS=true relaxes exactly that:
+// a top-level page load (Sec-Fetch-Dest: document) is let through from any site,
+// while images, video, iframes and the like are still checked.
 export function isRefererAllowed(env, request, url) {
-    if (request.headers.get('Sec-Fetch-Dest') === 'document') return true;
+    if (String(env.ALLOW_LINK_CLICKS).toLowerCase() === 'true' && request.headers.get('Sec-Fetch-Dest') === 'document') {
+        return true;
+    }
 
     const allowlist = String(env.ALLOWED_REFERERS || '')
         .split(',')
@@ -116,3 +119,15 @@ export function busyResponse(retryAfter) {
         headers: { 'Content-Type': 'text/plain;charset=UTF-8', 'Retry-After': String(seconds), 'Cache-Control': 'no-store' },
     });
 }
+
+// The 403 names the site the request came from, so an operator who sees it can tell
+// which hostname to add to ALLOWED_REFERERS.
+export function hotlinkResponse(request) {
+    let from = '';
+    try { from = new URL(request.headers.get('Referer')).hostname; } catch { /* no usable Referer */ }
+    return new Response(
+        'Hotlinking is not allowed on this deployment.' + (from ? ` (opened from ${from})` : ''),
+        { status: 403, headers: { 'Content-Type': 'text/plain;charset=UTF-8', 'Cache-Control': 'no-store' } }
+    );
+}
+

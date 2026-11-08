@@ -74,7 +74,10 @@ or sent to clients, and is the HMAC key material for manifests (see below).
   With `ALLOW_HTML_RENDER=true` and the uploader's choice, `/v/<id>.html` shows an
   "External Content Notice" first and then the page with `Content-Security-Policy:
   sandbox allow-scripts allow-forms allow-modals allow-popups` (never
-  `allow-same-origin`). The page therefore has an opaque origin: it cannot read
+  `allow-same-origin`). A `/v/` link carries an HMAC tag that only `/upload`
+  issues, for a plain (not expiring, not password-protected) HTML file whose
+  uploader ticked the option, so knowing some other file's id does not let anyone
+  turn it into a rendered page. The page therefore has an opaque origin: it cannot read
   this site's `localStorage` (history, settings), cannot use cached Basic-auth
   credentials (its requests are cross-origin and the upload CSRF check refuses
   them), and cannot be framed by others (`frame-ancestors 'none'`). The real page
@@ -141,13 +144,20 @@ or sent to clients, and is the HMAC key material for manifests (see below).
   that, and if a scanner such as Google Safe Browsing flags a hosted page, the
   warning can apply to your whole domain. Leave it off for public instances; if
   you turn it on, protect uploads with `UPLOAD_BASIC_USER` / `UPLOAD_BASIC_PASS`
-  and ideally serve the site from a dedicated hostname. Sandboxed pages cannot use
+  and ideally serve the site from a dedicated hostname. A hosted page can still
+  show forms and post whatever a visitor types to any third-party server
+  (`allow-forms`); the sandbox does not stop that. Sandboxed pages cannot use
   cookies or `localStorage`, so some web apps will not work. This was tested
   against the headers and the routing rules, not in real browsers.
-- **Referer allowlisting is best-effort.** It only judges embedded loads
-  (images, video, iframes, scripts); a top-level page load (`Sec-Fetch-Dest:
-  document`) is never blocked, since it carries the Referer of whatever link was
-  clicked. Empty referers always pass, a referer can be forged outside a browser,
+- **The unlock page only downloads by itself after a password was typed in**
+  (the default "smart" setting). A link that needs no password never starts a
+  download just by being opened, unless the visitor chose "always" in their own
+  browser settings.
+- **Referer allowlisting is best-effort.** With `ALLOWED_REFERERS` set it judges
+  every request, plain clicks included, so a link opened from a site that is not
+  listed gets the hotlink message (which names that site). `ALLOW_LINK_CLICKS=true`
+  exempts top-level page loads (`Sec-Fetch-Dest: document`) but still checks
+  embeds. Empty referers always pass, a referer can be forged outside a browser,
   and browsers too old to send Fetch Metadata fall back to the plain Referer rule.
 - **No script-src Content-Security-Policy on the app's own pages**
   (`index.html`, `join.html`, `unlock.html`, `settings.html`): they use inline

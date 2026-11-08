@@ -1,6 +1,6 @@
 import { isCrawler, videoPreviewPage } from '../_lib/preview.js';
 import { ConfigError, openManifest } from '../_lib/manifest.js';
-import { busyResponse, isRefererAllowed, servePage, withFileHeaders } from '../_lib/serve.js';
+import { busyResponse, hotlinkResponse, isRefererAllowed, servePage, withFileHeaders } from '../_lib/serve.js';
 import { RateLimitError, deleteMessage, fetchTelegramFile, getFilePath, isValidFileId } from '../_lib/telegram.js';
 
 const MAX_MANIFEST_BYTES = 16 * 1024; // 64 parts of ~140 bytes plus metadata
@@ -73,7 +73,7 @@ async function serve({ request, env, params }) {
         return text('Method not allowed', 405);
     }
     if (!isRefererAllowed(env, request, new URL(request.url))) {
-        return text('Hotlinking is not allowed on this deployment.', 403);
+        return hotlinkResponse(request);
     }
 
     const manifestId = String(params.id).split('.')[0];

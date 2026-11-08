@@ -50,6 +50,7 @@ async function deriveKey(env, label, algorithm, usages) {
     );
 }
 
+const renderKey = env => deriveKey(env, 'render-link', { name: 'HMAC', hash: 'SHA-256', length: 256 }, ['sign']);
 const manifestKey = env => deriveKey(env, 'manifest-seal', { name: 'AES-GCM', length: 256 }, ['encrypt', 'decrypt']);
 const receiptKey = env => deriveKey(env, 'receipt-sign', { name: 'HMAC', hash: 'SHA-256', length: 256 }, ['sign']);
 
@@ -123,3 +124,25 @@ export async function verifyReceipt(env, receipt) {
     }
     return diff === 0;
 }
+
+// A /v/ link is only valid if the server issued it, which it does only when the
+// uploader asked for "open in the browser" and the operator allows it. Without
+// this tag anyone who knows a file id could make a /v/ link that renders ANY
+// document of the channel as a web page on this domain.
+async function renderTag(env, fileId) {
+    const mac = new Uint8Array(await crypto.subtle.sign('HMAC', await renderKey(env), encoder.encode('render:' + fileId)));
+    let binary = '';
+    for (const byte of mac.slice(0, 16)) binary += String.fromCharCode(byte);
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+export const signRenderLink = renderTag;
+
+export async function verifyRenderLink(env, fileId, tag) {
+    if (typeof tag !== 'string' || tag.length !== 22) return false;
+    const expected = await renderTag(env, fileId);
+    let diff = 0;
+    for (let i = 0; i < expected.length; i++) diff |= expected.charCodeAt(i) ^ tag.charCodeAt(i);
+    return diff === 0;
+}
+

@@ -182,7 +182,7 @@
             plain = await decrypt(pw.value);
             form.classList.add('hidden');
             setStatus('Unlocked.');
-            showResult();
+            showResult(true);
           }
         } catch (err) {
           form.classList.remove('hidden');
@@ -226,7 +226,7 @@
         }
         plain = new Blob(chunks);
         setStatus('Done.');
-        showResult();
+        showResult(password !== null);
       }
 
       async function waitSeconds(n, prefix) {
@@ -274,7 +274,9 @@
         }
       }
 
-      function showResult() {
+      // unlockedByUser: a password was typed in (a deliberate action); false for a plain
+      // link that merely loaded, which must never start a download by itself in "smart" mode.
+      function showResult(unlockedByUser) {
         resultEl.classList.remove('hidden');
         // Only render known-safe media types inline; the type comes from the
         // upload, so never open the blob as a document on this origin.
@@ -289,9 +291,10 @@
           previewBox.appendChild(el);
         }
 
-        // "smart": download what cannot be previewed; media is shown instead.
+        // "smart": after a password unlock, download what cannot be previewed (media is
+        // shown instead). "always" is the user's explicit choice and applies to any link.
         var mode = (window.THSettings ? THSettings.load() : {}).autoDownload || 'smart';
-        if (mode === 'always' || (mode === 'smart' && !el)) {
+        if (mode === 'always' || (mode === 'smart' && unlockedByUser && !el)) {
           setStatus('Download started.');
           save();
         }

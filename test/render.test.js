@@ -11,6 +11,13 @@ describe('rendering uploaded HTML in the browser (/v/)', function () {
     const on = { TG_Bot_Token: 'T:T', TG_Chat_ID: '-1', ALLOW_HTML_RENDER: 'true' };
     const assets = { ASSETS: { fetch: async () => new Response('<html><title>External Content Notice | TeleHost</title></html>') } };
 
+    let sig, defaultName;
+    before(async function () {
+        const { signRenderLink } = await import('../functions/_lib/manifest.js');
+        sig = await signRenderLink(on, id);
+        defaultName = `${id}~${sig}.html`;
+    });
+
     beforeEach(function () {
         global.fetch = async url => String(url).includes('/getFile')
             ? Response.json({ ok: true, result: { file_path: 'documents/page.html' } })
@@ -18,7 +25,8 @@ describe('rendering uploaded HTML in the browser (/v/)', function () {
     });
     afterEach(function () { global.fetch = realFetch; });
 
-    async function visit({ env = on, query = '', headers = {}, name = `${id}.html`, method = 'GET' } = {}) {
+    async function visit({ env = on, query = '', headers = {}, name, method = 'GET' } = {}) {
+        name = name || defaultName;
         const { onRequest } = await import('../functions/v/[id].js');
         const request = new Request(`https://host.test/v/${name}${query}`, { method, headers });
         return onRequest({ request, env: { ...env, ...assets }, params: { id: name } });
@@ -31,6 +39,32 @@ describe('rendering uploaded HTML in the browser (/v/)', function () {
                 assert.strictEqual((await visit({ env })).status, 404);
                 assert.strictEqual((await visit({ env, query: '?open=1', headers: ours })).status, 404);
             }
+        });
+    });
+
+    describe('only links the server issued work', function () {
+        it('refuses an unsigned link, a wrong tag, and a tag made for another file', async function () {
+            const other = 'X'.repeat(30);
+            const { signRenderLink } = await import('../functions/_lib/manifest.js');
+            const tagForOther = await signRenderLink(on, other);
+            for (const name of [`${id}.html`, `${id}~.html`, `${id}~${'A'.repeat(22)}.html`, `${id}~${sig.slice(1)}.html`, `${id}~${tagForOther}.html`, `${other}~${sig}.html`]) {
+                assert.strictEqual((await visit({ name })).status, 404, `notice: ${name}`);
+                assert.strictEqual((await visit({ name, query: '?open=1', headers: ours })).status, 404, `page: ${name}`);
+            }
+        });
+
+        it('refuses a tag issued under a different link secret', async function () {
+            const env = { ...on, LINK_SECRET: 'z'.repeat(32) };
+            assert.strictEqual((await visit({ env })).status, 404, 'a token-keyed link does not open under another secret');
+            const { signRenderLink } = await import('../functions/_lib/manifest.js');
+            const name = `${id}~${await signRenderLink(env, id)}.html`;
+            assert.strictEqual((await visit({ env, name })).status, 200);
+        });
+
+        it('a bad LINK_SECRET gives a clear 500, not a quiet 404', async function () {
+            const res = await visit({ env: { ...on, LINK_SECRET: 'short' } });
+            assert.strictEqual(res.status, 500);
+            assert.match(await res.text(), /LINK_SECRET must be at least 32 characters/);
         });
     });
 
@@ -76,12 +110,12 @@ describe('rendering uploaded HTML in the browser (/v/)', function () {
             for (const headers of [{ 'Sec-Fetch-Site': 'none' }, { 'Sec-Fetch-Site': 'cross-site' }, { 'Sec-Fetch-Site': 'same-site' }, {}, { Referer: 'https://evil.example/' }]) {
                 const res = await visit({ query: '?open=1', headers });
                 assert.strictEqual(res.status, 303, JSON.stringify(headers));
-                assert.strictEqual(res.headers.get('Location'), `https://host.test/v/${id}.html`);
+                assert.strictEqual(res.headers.get('Location'), `https://host.test/v/${defaultName}`);
             }
         });
 
         it('accepts a click from the notice in browsers without Fetch Metadata (same-origin Referer)', async function () {
-            const res = await visit({ query: '?open=1', headers: { Referer: `https://host.test/v/${id}.html` } });
+            const res = await visit({ query: '?open=1', headers: { Referer: `https://host.test/v/${defaultName}` } });
             assert.strictEqual(res.status, 200);
         });
 
@@ -94,8 +128,8 @@ describe('rendering uploaded HTML in the browser (/v/)', function () {
 
     describe('what it will and will not serve', function () {
         it('only .html and .htm, with a valid id, over GET/HEAD', async function () {
-            assert.strictEqual((await visit({ name: `${id}.htm` })).status, 200);
-            for (const name of [`${id}.svg`, `${id}.png`, `${id}.js`, `${id}`, 'short.html', `${id}.html.exe`]) {
+            assert.strictEqual((await visit({ name: `${id}~${sig}.htm` })).status, 200);
+            for (const name of [`${id}~${sig}.svg`, `${id}~${sig}.png`, `${id}~${sig}.js`, `${id}~${sig}`, 'short.html', `${id}~${sig}.html.exe`]) {
                 assert.strictEqual((await visit({ name })).status, 404, name);
             }
             assert.strictEqual((await visit({ method: 'POST' })).status, 405);
@@ -130,7 +164,11 @@ describe('rendering uploaded HTML in the browser (/v/)', function () {
 
         it('gives an HTML file a /v/ link when asked and allowed', async function () {
             const item = await upload({ render: '1' }, on);
-            assert.strictEqual(item.src, `/v/${'D'.repeat(30)}.html`);
+            const { signRenderLink, verifyRenderLink } = await import('../functions/_lib/manifest.js');
+            const file = 'D'.repeat(30);
+            const tag = await signRenderLink(on, file);
+            assert.strictEqual(item.src, `/v/${file}~${tag}.html`);
+            assert.ok(await verifyRenderLink(on, file, tag));
             assert.strictEqual(item.note, undefined);
         });
 
@@ -138,6 +176,20 @@ describe('rendering uploaded HTML in the browser (/v/)', function () {
             const item = await upload({ render: '1' }, { TG_Bot_Token: 'T:T', TG_Chat_ID: '-1' });
             assert.strictEqual(item.src, `/file/${'D'.repeat(30)}.html`);
             assert.match(item.note, /turned off on this deployment/);
+        });
+
+        it('stops before anything reaches Telegram when the link secret is bad', async function () {
+            let sent = 0;
+            const check = global.fetch;
+            global.fetch = async () => { sent++; return Response.json({ ok: true }); };
+            const { onRequestPost } = await import('../functions/upload.js');
+            const body = new FormData();
+            body.append('file', new File(['<h1>x</h1>'], 'page.html', { type: 'text/html' }));
+            body.append('render', '1');
+            const res = await onRequestPost({ request: new Request('https://host.test/upload', { method: 'POST', body }), env: { ...on, LINK_SECRET: 'short' } });
+            global.fetch = check;
+            assert.strictEqual(res.status, 500);
+            assert.strictEqual(sent, 0);
         });
 
         it('leaves everything else alone: no flag, other file types, other options', async function () {

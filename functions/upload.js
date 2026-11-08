@@ -1,5 +1,5 @@
 import { authenticateUpload } from './_lib/auth.js';
-import { linkSecret, signReceipt } from './_lib/manifest.js';
+import { linkSecret, signReceipt, signRenderLink } from './_lib/manifest.js';
 import { checkEncryption, checkExpiry, cleanMeta, htmlRenderEnabled } from './_lib/options.js';
 import { RateLimitedError, createManifestLink, failure, getFileId, sendToTelegram } from './_lib/send.js';
 
@@ -31,11 +31,16 @@ export async function onRequestPost(context) {
         const expiresIn = checkExpiry(formData.get('expiresIn'));
         const enc = parseEncryption(formData);
         const wantsRender = formData.get('render') === '1';
-        // Fail before anything reaches Telegram, not after an orphan upload.
-        if (expiresIn || enc || formData.get('part')) linkSecret(env);
 
         const fileName = uploadFile.name;
         const fileExtension = fileName.split('.').pop().toLowerCase();
+
+        // Opening HTML in the browser: only for a plain upload, when asked and allowed.
+        const renderLink = wantsRender && !expiresIn && !enc && !formData.get('part') &&
+            ['html', 'htm'].includes(fileExtension) && htmlRenderEnabled(env);
+
+        // Fail before anything reaches Telegram, not after an orphan upload.
+        if (expiresIn || enc || formData.get('part') || renderLink) linkSecret(env);
 
         const telegramFormData = new FormData();
         telegramFormData.append("chat_id", env.TG_Chat_ID);
@@ -125,9 +130,10 @@ export async function onRequestPost(context) {
         // "Open HTML in the browser": a /v/ link instead of a /file/ link, if the operator allows it.
         let src = `/file/${fileId}${thumbId ? '~' + thumbId : ''}.${fileExtension}`;
         let note;
-        if (wantsRender && ['html', 'htm'].includes(fileExtension)) {
-            if (htmlRenderEnabled(env)) src = `/v/${fileId}.${fileExtension}`;
-            else note = 'Opening HTML in the browser is turned off on this deployment, so this link downloads the file.';
+        if (renderLink) {
+            src = `/v/${fileId}~${await signRenderLink(env, fileId)}.${fileExtension}`;
+        } else if (wantsRender && ['html', 'htm'].includes(fileExtension) && !htmlRenderEnabled(env)) {
+            note = 'Opening HTML in the browser is turned off on this deployment, so this link downloads the file.';
         }
 
         return new Response(

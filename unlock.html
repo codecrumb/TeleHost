@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>TeleHost – Protected file</title>
+  <link rel="icon" type="image/x-icon" href="/favicon.ico">
+  <link rel="icon" type="image/png" sizes="32x32" href="/assets/icons/favicon-32.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/assets/icons/apple-touch-icon.png">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0d0d0d; color: #e0e0e0; min-height: 100vh;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      display: flex; flex-direction: column; align-items: center; padding: 48px 16px 64px;
+    }
+    h1 { font-size: 2rem; font-weight: 700; letter-spacing: -0.5px; margin-bottom: 40px; }
+    h1 a { color: #fff; text-decoration: none; }
+    .card {
+      width: 100%; max-width: 640px; background: #1a1a1a; border: 1px solid #2a2a2a;
+      border-radius: 16px; padding: 40px 36px; display: flex; flex-direction: column;
+      align-items: center; gap: 20px; text-align: center;
+    }
+    .name { color: #fff; font-size: 1.25rem; font-weight: 600; word-break: break-word; max-width: 100%; }
+    .meta { color: #777; font-size: 0.85rem; margin-top: 6px; }
+    .status { color: #aaa; font-size: 0.95rem; min-height: 1.3em; }
+    .status.error { color: #ff6b6b; }
+    form { width: 100%; display: flex; flex-direction: column; gap: 12px; align-items: center; }
+    input[type="password"] {
+      width: 100%; max-width: 320px; padding: 12px 14px; font-size: 1rem; color: #fff;
+      background: #111; border: 1px solid #333; border-radius: 10px;
+    }
+    input[type="password"]:focus-visible, .btn:focus-visible { outline: 2px solid #4a9eff; outline-offset: 2px; }
+    .btn {
+      padding: 12px 32px; font-size: 1rem; font-weight: 600; border: none; border-radius: 10px;
+      background: #fff; color: #000; cursor: pointer;
+    }
+    .btn:hover { background: #e8e8e8; }
+    .btn:disabled { opacity: 0.6; cursor: default; }
+    .preview { max-width: 100%; max-height: 360px; border-radius: 10px; }
+    .hidden { display: none !important; }
+    @media (max-width: 480px) { body { padding-top: 32px; } .card { padding: 32px 20px; } }
+  </style>
+</head>
+<body>
+  <h1><a href="/">TeleHost</a></h1>
+  <div class="card">
+    <div>
+      <div class="name" id="name">Protected file</div>
+      <div class="meta" id="meta"></div>
+    </div>
+    <div class="status" id="status" role="status">Loading…</div>
+    <form id="form" class="hidden">
+      <input type="password" id="password" placeholder="Password" autocomplete="off" required aria-label="Password">
+      <button class="btn" id="unlock" type="submit">Unlock</button>
+    </form>
+    <div id="result" class="hidden" style="display:flex; flex-direction:column; align-items:center; gap:16px; width:100%;">
+      <div id="previewBox"></div>
+      <button class="btn" id="download" type="button">Download</button>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      var nameEl = document.getElementById('name'), metaEl = document.getElementById('meta');
+      var statusEl = document.getElementById('status'), form = document.getElementById('form');
+      var pw = document.getElementById('password'), unlockBtn = document.getElementById('unlock');
+      var resultEl = document.getElementById('result'), previewBox = document.getElementById('previewBox');
+      var downloadBtn = document.getElementById('download');
+      var info = null, cipher = null, plain = null;
+
+      function setStatus(msg, isError) {
+        statusEl.textContent = msg;
+        statusEl.classList.toggle('error', !!isError);
+      }
+      function fmt(n) {
+        if (n < 1024) return n + ' B';
+        var u = ['KB', 'MB', 'GB'], i = -1;
+        do { n /= 1024; i++; } while (n >= 1024 && i < u.length - 1);
+        return n.toFixed(n >= 100 ? 0 : 1) + ' ' + u[i];
+      }
+      function unb64(s) {
+        s = s.replace(/-/g, '+').replace(/_/g, '/');
+        while (s.length % 4) s += '=';
+        var bin = atob(s), out = new Uint8Array(bin.length);
+        for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+        return out;
+      }
+
+      var id = (location.pathname.split('/')[2] || '').split('.')[0];
+      if (!/^[A-Za-z0-9_-]{20,}$/.test(id)) { setStatus('Invalid link.', true); return; }
+
+      fetch('/s/' + id + '?meta=1').then(function (res) {
+        if (res.status === 410) throw new Error('This link has expired.');
+        if (!res.ok) throw new Error('This link is invalid or the file is gone.');
+        return res.json();
+      }).then(function (data) {
+        if (!data || !data.enc) throw new Error('This file is not password protected.');
+        info = data;
+        var name = String(data.name || 'download').replace(/[\\/:*?"<>|\r\n]/g, '_');
+        info.name = name;
+        nameEl.textContent = name;
+        document.title = name + ' – TeleHost';
+        metaEl.textContent = data.size ? fmt(data.size) : '';
+        setStatus('Enter the password to unlock this file.');
+        form.classList.remove('hidden');
+        pw.focus();
+      }).catch(function (e) { setStatus(e.message, true); });
+
+      async function decrypt(password) {
+        if (!cipher) {
+          var res = await fetch('/s/' + id + '?raw=1');
+          if (res.status === 410) throw new Error('This link has expired.');
+          if (!res.ok) throw new Error('Could not download the file.');
+          cipher = await res.arrayBuffer();
+        }
+        var base = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveKey']);
+        var key = await crypto.subtle.deriveKey(
+          { name: 'PBKDF2', salt: unb64(info.enc.salt), iterations: info.enc.iter, hash: 'SHA-256' },
+          base, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+        try {
+          return await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(info.enc.iv) }, key, cipher);
+        } catch (_) {
+          var wrong = new Error('Wrong password.');
+          wrong.wrongPassword = true;
+          throw wrong;
+        }
+      }
+
+      form.addEventListener('submit', async function (e) {
+        e.preventDefault();
+        unlockBtn.disabled = true;
+        setStatus('Decrypting…');
+        try {
+          plain = await decrypt(pw.value);
+          form.classList.add('hidden');
+          setStatus('Unlocked.');
+          showResult();
+        } catch (err) {
+          setStatus(err.message || 'Something went wrong.', true);
+          if (err.wrongPassword) { pw.select(); }
+        } finally {
+          unlockBtn.disabled = false;
+        }
+      });
+
+      function showResult() {
+        resultEl.classList.remove('hidden');
+        // Only render known-safe media types inline; the type comes from the
+        // upload, so never open the blob as a document on this origin.
+        var type = String(info.type || '');
+        var el = null;
+        if (/^image\/(png|jpeg|gif|webp|avif|bmp)$/.test(type)) el = document.createElement('img');
+        else if (/^video\/(mp4|webm|ogg|quicktime)$/.test(type)) { el = document.createElement('video'); el.controls = true; }
+        else if (/^audio\/(mpeg|mp4|ogg|wav|flac|aac|webm)$/.test(type)) { el = document.createElement('audio'); el.controls = true; }
+        if (el) {
+          el.className = 'preview';
+          el.src = URL.createObjectURL(new Blob([plain], { type: type }));
+          previewBox.appendChild(el);
+        }
+      }
+
+      downloadBtn.addEventListener('click', function () {
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([plain], { type: 'application/octet-stream' }));
+        a.download = info.name;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(function () { URL.revokeObjectURL(a.href); }, 60000);
+      });
+    })();
+  </script>
+</body>
+</html>

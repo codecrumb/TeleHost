@@ -64,3 +64,16 @@ export function withFileHeaders(response, filename) {
         headers,
     });
 }
+
+// Serves a static page (e.g. "join" -> join.html) under a dynamic route.
+// Pages serves join.html at the clean URL /join and redirects /join.html there.
+export async function servePage(env, request, name) {
+    let page = await env.ASSETS.fetch(new URL('/' + name, request.url));
+    if (page.status >= 300 && page.status < 400 && page.headers.get('Location')) {
+        page = await env.ASSETS.fetch(new URL(page.headers.get('Location'), request.url));
+    }
+    return new Response(page.body, {
+        status: page.status,
+        headers: { 'Content-Type': 'text/html;charset=UTF-8', 'Cache-Control': 'no-cache' },
+    });
+}

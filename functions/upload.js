@@ -28,6 +28,7 @@ export async function onRequestPost(context) {
         }
 
         const expiresIn = parseExpiry(formData.get('expiresIn'));
+        const enc = parseEncryption(formData);
 
         const fileName = uploadFile.name;
         const fileExtension = fileName.split('.').pop().toLowerCase();
@@ -72,24 +73,27 @@ export async function onRequestPost(context) {
             throw new Error('Failed to get file ID');
         }
 
-        if (expiresIn) {
+        if (expiresIn || enc) {
+            // For encrypted uploads the file is ciphertext; the manifest keeps the
+            // original name/type/size so the unlock page can restore them.
             const manifest = await signManifest(env, {
                 v: 1,
                 fileId,
                 msgId: result.data.result.message_id,
-                name: fileName,
-                type: uploadFile.type || '',
-                size: uploadFile.size,
-                exp: Date.now() + expiresIn * 1000,
+                name: enc ? enc.name : fileName,
+                type: enc ? enc.type : (uploadFile.type || ''),
+                size: enc ? enc.size : uploadFile.size,
+                ...(expiresIn ? { exp: Date.now() + expiresIn * 1000 } : {}),
+                ...(enc ? { enc: enc.params } : {}),
             });
             const manifestForm = new FormData();
             manifestForm.append('chat_id', env.TG_Chat_ID);
             manifestForm.append('document', new Blob([JSON.stringify(manifest)], { type: 'application/json' }), 'link.json');
             const manifestResult = await sendToTelegram(manifestForm, 'sendDocument', env);
             const manifestId = manifestResult.success && getFileId(manifestResult.data);
-            if (!manifestId) throw new Error('Failed to create expiring link');
+            if (!manifestId) throw new Error('Failed to create link');
             return new Response(
-                JSON.stringify([{ 'src': `/s/${manifestId}.${fileExtension}`, 'fallback': result.usedFallback || false, 'expires': manifest.exp }]),
+                JSON.stringify([{ 'src': enc ? `/s/${manifestId}` : `/s/${manifestId}.${fileExtension}`, 'fallback': result.usedFallback || false, 'expires': manifest.exp }]),
                 { status: 200, headers: { 'Content-Type': 'application/json' } }
             );
         }
@@ -131,6 +135,26 @@ function parseExpiry(value) {
         throw new Error('Invalid expiry');
     }
     return seconds;
+}
+
+// The browser encrypts password-protected files (AES-GCM, PBKDF2 key) before
+// upload; the server only records the public parameters needed to decrypt.
+function parseEncryption(formData) {
+    const salt = formData.get('encSalt');
+    if (!salt) return null;
+    const iv = formData.get('encIv');
+    const iter = Number(formData.get('encIter'));
+    const b64url = /^[A-Za-z0-9_-]{8,64}$/;
+    if (!b64url.test(salt) || !b64url.test(iv || '') ||
+        !Number.isInteger(iter) || iter < 100000 || iter > 1000000) {
+        throw new Error('Invalid encryption parameters');
+    }
+    return {
+        params: { alg: 'AES-GCM', kdf: 'PBKDF2-SHA256', salt, iv, iter },
+        name: String(formData.get('encName') || 'download').slice(0, 255),
+        type: String(formData.get('encType') || '').slice(0, 100),
+        size: Math.max(0, Number(formData.get('encSize')) || 0),
+    };
 }
 
 function getFileId(response) {

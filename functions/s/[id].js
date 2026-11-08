@@ -1,5 +1,5 @@
 import { verifyManifest } from '../_lib/manifest.js';
-import { isRefererAllowed, withFileHeaders } from '../_lib/serve.js';
+import { isRefererAllowed, servePage, withFileHeaders } from '../_lib/serve.js';
 import { deleteMessage, fetchTelegramFile, getFilePath, isValidFileId } from '../_lib/telegram.js';
 
 const MAX_MANIFEST_BYTES = 8 * 1024;
@@ -45,13 +45,30 @@ export async function onRequest({ request, env, params }) {
         return text('This link has expired.', 410);
     }
 
+    // Password-protected: the browser decrypts. ?meta=1 returns what the unlock
+    // page needs, ?raw=1 the ciphertext, anything else the unlock page itself.
+    const query = new URL(request.url).searchParams;
+    if (manifest.enc && !query.has('raw')) {
+        if (!query.has('meta')) return servePage(env, request, 'unlock');
+        return Response.json(
+            { name: manifest.name, type: manifest.type, size: manifest.size, enc: manifest.enc },
+            { headers: { 'Cache-Control': 'no-store' } }
+        );
+    }
+
     const filePath = await getFilePath(env, manifest.fileId);
     if (!filePath) return text('Not found', 404);
 
     const upstream = await fetchTelegramFile(env, filePath, request);
     if (!upstream.ok && upstream.status !== 206) return text('Upstream error', 502);
 
-    const served = withFileHeaders(upstream, manifest.name || params.id);
+    // The stored bytes are ciphertext: never label them with the original type.
+    const served = manifest.enc
+        ? new Response(upstream.body, {
+            status: upstream.status,
+            headers: { 'Content-Type': 'application/octet-stream' },
+        })
+        : withFileHeaders(upstream, manifest.name || params.id);
     const headers = new Headers(served.headers);
     headers.set('Cache-Control', 'private, no-cache');
     headers.set('X-Robots-Tag', 'noindex');

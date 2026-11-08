@@ -141,6 +141,27 @@
       background: #1a1a1a;
     }
 
+    .options {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 10px 16px;
+    }
+
+    .pw {
+      background: transparent;
+      color: #ccc;
+      border: 1px solid #444;
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 0.8rem;
+      width: 150px;
+    }
+
+    .pw::placeholder {
+      color: #666;
+    }
+
     /* ── Hint text ── */
     #hint {
       font-size: 0.78rem;
@@ -381,15 +402,18 @@
         <button class="seg" data-mode="original" type="button">Original</button>
       </div>
 
-      <label class="expiry" id="expiry">Link expires
-        <select id="expirySel">
-          <option value="">never</option>
-          <option value="3600">in 1 hour</option>
-          <option value="86400">in 1 day</option>
-          <option value="604800">in 7 days</option>
-          <option value="2592000">in 30 days</option>
-        </select>
-      </label>
+      <div class="options">
+        <label class="expiry" id="expiry">Link expires
+          <select id="expirySel">
+            <option value="">never</option>
+            <option value="3600">in 1 hour</option>
+            <option value="86400">in 1 day</option>
+            <option value="604800">in 7 days</option>
+            <option value="2592000">in 30 days</option>
+          </select>
+        </label>
+        <input class="pw" id="passwordInput" type="password" placeholder="Password (optional)" autocomplete="new-password" aria-label="Password (optional)">
+      </div>
 
       <p id="hint"></p>
     </div>
@@ -446,6 +470,7 @@
       const hintEl        = document.getElementById('hint');
       const segCtrl       = document.getElementById('segCtrl');
       const expirySel     = document.getElementById('expirySel');
+      const passwordInput = document.getElementById('passwordInput');
 
       // Telegram lets bots upload 50 MB but download only 20 MB, so bigger files
       // are split into parts this size and tied together by a small manifest file.
@@ -557,12 +582,13 @@
 
       // ── Click to upload ────────────────────────────────────────────────
       dropzone.addEventListener('click', function (e) {
-        if (e.target.closest('.seg-ctrl, .expiry')) return; // let the controls handle their own clicks
+        if (e.target.closest('.seg-ctrl, .options')) return; // let the controls handle their own clicks
         if (e.target === retryBtn) return;
         fileInput.click();
       });
 
       dropzone.addEventListener('keydown', function (e) {
+        if (e.target !== dropzone) return; // keys typed into the options must not open the picker
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
           fileInput.click();
@@ -624,11 +650,11 @@
         }
       }
 
-      async function postFile(file, mode, expiresIn) {
+      async function postFile(file, mode, fields) {
         const fd = new FormData();
         fd.append('file', file);
         fd.append('compressionMode', mode);
-        if (expiresIn) fd.append('expiresIn', expiresIn);
+        Object.keys(fields || {}).forEach(function (k) { fd.append(k, fields[k]); });
         const res = await fetch('/upload', { method: 'POST', body: fd });
         const data = await res.json();
         if (!res.ok) {
@@ -672,6 +698,34 @@
         return '/join/' + item.src.replace('/file/', '');
       }
 
+      // Password-protected uploads are encrypted here, so Telegram and the server
+      // only ever see ciphertext. The unlock page uses the same parameters.
+      const PBKDF2_ITER = 600000;
+
+      function toBase64Url(bytes) {
+        let bin = '';
+        bytes.forEach(function (b) { bin += String.fromCharCode(b); });
+        return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      }
+
+      async function encryptFile(file, password) {
+        if (!(window.crypto && crypto.subtle)) throw new Error('Password protection needs a secure (https) connection.');
+        const salt = crypto.getRandomValues(new Uint8Array(16));
+        const iv = crypto.getRandomValues(new Uint8Array(12));
+        const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveKey']);
+        const key = await crypto.subtle.deriveKey(
+          { name: 'PBKDF2', salt: salt, iterations: PBKDF2_ITER, hash: 'SHA-256' },
+          base, { name: 'AES-GCM', length: 256 }, false, ['encrypt']);
+        const cipher = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv }, key, await file.arrayBuffer());
+        return {
+          file: new File([cipher], 'encrypted.bin', { type: 'application/octet-stream' }),
+          fields: {
+            encSalt: toBase64Url(salt), encIv: toBase64Url(iv), encIter: PBKDF2_ITER,
+            encName: file.name, encType: file.type || '', encSize: file.size,
+          },
+        };
+      }
+
       async function uploadFile(file) {
         showUploading(file.name);
 
@@ -681,15 +735,26 @@
           }
 
           const expiresIn = expirySel.value;
-          if (expiresIn && file.size > CHUNK_SIZE) {
-            return { ok: false, error: 'Expiring links support files up to 19 MB for now.' };
+          const password = passwordInput.value;
+          if ((expiresIn || password) && file.size > CHUNK_SIZE) {
+            return { ok: false, error: 'Expiring and password-protected links support files up to 19 MB for now.' };
           }
 
           if (file.size > CHUNK_SIZE) {
             const joinPath = await uploadChunked(file);
             addResult(window.location.origin + joinPath, false);
           } else {
-            const item = await postFile(file, currentMode, expiresIn);
+            let toSend = file;
+            const fields = {};
+            if (expiresIn) fields.expiresIn = expiresIn;
+            if (password) {
+              showUploading('Encrypting ' + file.name);
+              const encrypted = await encryptFile(file, password);
+              toSend = encrypted.file;
+              Object.assign(fields, encrypted.fields);
+              showUploading(file.name);
+            }
+            const item = await postFile(toSend, currentMode, fields);
             addResult(window.location.origin + item.src, item.fallback);
           }
 

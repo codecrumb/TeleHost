@@ -1,8 +1,17 @@
 import { isCrawler, videoPreviewPage } from '../_lib/preview.js';
-import { CONTENT_TYPES_BY_EXTENSION, isRefererAllowed, withFileHeaders } from '../_lib/serve.js';
-import { fetchTelegramFile, getFilePath, isValidFileId } from '../_lib/telegram.js';
+import { CONTENT_TYPES_BY_EXTENSION, busyResponse, isRefererAllowed, withFileHeaders } from '../_lib/serve.js';
+import { RateLimitError, fetchTelegramFile, getFilePath, isValidFileId } from '../_lib/telegram.js';
 
-export async function onRequest({ request, env, params }) {
+export async function onRequest(context) {
+    try {
+        return await serve(context);
+    } catch (error) {
+        if (error instanceof RateLimitError) return busyResponse(error.retryAfter);
+        throw error;
+    }
+}
+
+async function serve({ request, env, params }) {
     if (request.method !== 'GET' && request.method !== 'HEAD') {
         return new Response('Method not allowed', { status: 405, headers: { Allow: 'GET, HEAD' } });
     }
@@ -43,6 +52,7 @@ export async function onRequest({ request, env, params }) {
     }
 
     const response = await fetchTelegramFile(env, filePath, request);
+    if (response.status === 429) return busyResponse(response.headers.get('Retry-After'));
     if (!response.ok && response.status !== 206) {
         return new Response('Upstream error', { status: response.status === 404 ? 404 : 502 });
     }

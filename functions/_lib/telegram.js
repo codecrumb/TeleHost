@@ -1,5 +1,14 @@
 // Telegram Bot API helpers shared by the Pages Functions.
 
+// Telegram answered 429. Callers turn this into a 429 for the browser, which
+// waits and retries; the worker itself never sleeps through a rate limit.
+export class RateLimitError extends Error {
+    constructor(retryAfter) {
+        super('Telegram is rate limiting requests');
+        this.retryAfter = Number(retryAfter) > 0 ? Math.ceil(Number(retryAfter)) : 5;
+    }
+}
+
 // Bot file IDs are URL-safe base64; anything else never reaches the API.
 export function isValidFileId(fileId) {
     return typeof fileId === 'string' && /^[A-Za-z0-9_-]{20,}$/.test(fileId);
@@ -12,6 +21,10 @@ export async function getFilePath(env, fileId) {
         const res = await fetch(
             `https://api.telegram.org/bot${env.TG_Bot_Token}/getFile?file_id=${encodeURIComponent(fileId)}`
         );
+        if (res.status === 429) {
+            const body = await res.json().catch(() => ({}));
+            throw new RateLimitError(body.parameters && body.parameters.retry_after);
+        }
         if (!res.ok) {
             console.error(`getFile failed with HTTP ${res.status}`);
             return null;
@@ -19,6 +32,7 @@ export async function getFilePath(env, fileId) {
         const { ok, result } = await res.json();
         return ok && result && result.file_path ? result.file_path : null;
     } catch (error) {
+        if (error instanceof RateLimitError) throw error;
         console.error('getFile error:', error.message);
         return null;
     }

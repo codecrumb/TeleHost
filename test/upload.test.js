@@ -82,3 +82,39 @@ describe('/upload expiry', function () {
         assert.strictEqual(sends.length, 0);
     });
 });
+
+describe('Telegram rate limiting', function () {
+    const env = { TG_Bot_Token: 't', TG_Chat_ID: '-1' };
+    const realFetch = global.fetch;
+    afterEach(function () { global.fetch = realFetch; });
+
+    it('answers 429 with Retry-After instead of sleeping or failing', async function () {
+        const calls = [];
+        global.fetch = async url => {
+            calls.push(String(url).split('/').pop());
+            return Response.json({ ok: false, error_code: 429, description: 'Too Many Requests: retry after 12', parameters: { retry_after: 12 } }, { status: 429 });
+        };
+        const { onRequestPost } = await import('../functions/upload.js');
+        const body = new FormData();
+        body.append('file', new File(['x'], 'a.png', { type: 'image/png' }));
+        const started = Date.now();
+        const res = await onRequestPost({ request: new Request('https://x.test/upload', { method: 'POST', body }), env });
+        assert.strictEqual(res.status, 429);
+        assert.strictEqual(res.headers.get('Retry-After'), '12');
+        assert.strictEqual((await res.json()).retryAfter, 12);
+        assert.deepStrictEqual(calls, ['sendPhoto'], 'no immediate document fallback on a rate limit');
+        assert.ok(Date.now() - started < 500, 'the worker does not sleep');
+    });
+
+    it('/file and /s answer 429 when getFile is rate limited', async function () {
+        global.fetch = async () => Response.json({ ok: false, error_code: 429, parameters: { retry_after: 7 } }, { status: 429 });
+        const id = 'A'.repeat(30);
+        const { onRequest: file } = await import('../functions/file/[id].js');
+        const res = await file({ request: new Request(`https://x.test/file/${id}.png`), env, params: { id: `${id}.png` } });
+        assert.strictEqual(res.status, 429);
+        assert.strictEqual(res.headers.get('Retry-After'), '7');
+        const { onRequest: share } = await import('../functions/s/[id].js');
+        const res2 = await share({ request: new Request(`https://x.test/s/${id}`), env, params: { id } });
+        assert.strictEqual(res2.status, 429);
+    });
+});

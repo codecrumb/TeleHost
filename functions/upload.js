@@ -1,5 +1,17 @@
 import { signManifest } from './_lib/manifest.js';
 
+// Thrown when Telegram rate limits an upload; becomes a 429 the browser retries.
+class RateLimitedError extends Error {
+    constructor(retryAfter) {
+        super('Telegram is rate limiting uploads');
+        this.retryAfter = retryAfter;
+    }
+}
+
+function failure(result, fallbackMessage) {
+    return result.retryAfter ? new RateLimitedError(result.retryAfter) : new Error(result.error || fallbackMessage);
+}
+
 const MAX_EXPIRY_SECONDS = 30 * 24 * 60 * 60;
 
 export async function onRequestPost(context) {
@@ -70,7 +82,7 @@ export async function onRequestPost(context) {
         const result = await sendToTelegram(telegramFormData, apiEndpoint, env);
 
         if (!result.success) {
-            throw new Error(result.error);
+            throw failure(result, 'Upload to Telegram failed');
         }
 
         const fileId = getFileId(result.data);
@@ -101,7 +113,8 @@ export async function onRequestPost(context) {
             manifestForm.append('chat_id', env.TG_Chat_ID);
             manifestForm.append('document', new Blob([JSON.stringify(manifest)], { type: 'application/json' }), 'link.json');
             const manifestResult = await sendToTelegram(manifestForm, 'sendDocument', env);
-            const manifestId = manifestResult.success && getFileId(manifestResult.data);
+            if (!manifestResult.success) throw failure(manifestResult, 'Failed to create link');
+            const manifestId = getFileId(manifestResult.data);
             if (!manifestId) throw new Error('Failed to create link');
             return new Response(
                 JSON.stringify([{ 'src': enc ? `/s/${manifestId}` : `/s/${manifestId}.${fileExtension}`, 'fallback': result.usedFallback || false, 'expires': manifest.exp }]),
@@ -117,6 +130,12 @@ export async function onRequestPost(context) {
             }
         );
     } catch (error) {
+        if (error instanceof RateLimitedError) {
+            return new Response(
+                JSON.stringify({ error: 'Telegram is rate limiting uploads; retrying shortly.', retryAfter: error.retryAfter }),
+                { status: 429, headers: { 'Content-Type': 'application/json', 'Retry-After': String(error.retryAfter) } }
+            );
+        }
         console.error('Upload error:', error);
         return new Response(
             JSON.stringify({ error: error.message }),
@@ -203,7 +222,8 @@ async function sendToTelegram(formData, apiEndpoint, env, retryCount = 0) {
         }
 
         // 图片上传失败时转为文档方式重试
-        if (retryCount < MAX_RETRIES && apiEndpoint === 'sendPhoto') {
+        const rateLimited = responseData.error_code === 429;
+        if (!rateLimited && retryCount < MAX_RETRIES && apiEndpoint === 'sendPhoto') {
             console.log('Retrying image as document...');
             const newFormData = new FormData();
             newFormData.append('chat_id', formData.get('chat_id'));
@@ -216,7 +236,8 @@ async function sendToTelegram(formData, apiEndpoint, env, retryCount = 0) {
 
         return {
             success: false,
-            error: responseData.description || 'Upload to Telegram failed'
+            error: responseData.description || 'Upload to Telegram failed',
+            retryAfter: rateLimited ? Math.ceil((responseData.parameters && responseData.parameters.retry_after) || 5) : null,
         };
     } catch (error) {
         console.error('Network error:', error);

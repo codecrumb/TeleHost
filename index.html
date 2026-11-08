@@ -783,7 +783,6 @@
       const jobs = [];      // everything shown in the tray
       const queue = [];     // jobs waiting for their turn
       let jobSeq = 0;
-      let pumping = false;
 
       const isActive = function (job) { return job.state === 'queued' || job.state === 'uploading' || job.state === 'prep'; };
 
@@ -928,15 +927,20 @@
         pump();
       }
 
-      async function pump() {
-        if (pumping) return;
-        pumping = true;
-        while (queue.length) {
+      // Two at a time: more would hit Telegram's per-chat message limit sooner.
+      const UPLOAD_CONCURRENCY = 2;
+      let running = 0;
+
+      function pump() {
+        while (running < UPLOAD_CONCURRENCY && queue.length) {
           const job = queue.shift();
           if (job.cancelled || jobs.indexOf(job) < 0) continue;
-          await runJob(job);
+          running++;
+          runJob(job).finally(function () {
+            running--;
+            pump();
+          });
         }
-        pumping = false;
       }
 
       async function runJob(job) {
@@ -980,6 +984,11 @@
           xhr.onload = function () {
             let data = null;
             try { data = JSON.parse(xhr.responseText); } catch (_) {}
+            if (xhr.status === 429) {
+              const busy = new Error('Telegram is busy');
+              busy.retryAfter = Number(xhr.getResponseHeader('Retry-After')) || (data && data.retryAfter) || 5;
+              return reject(busy);
+            }
             if (xhr.status < 200 || xhr.status >= 300) {
               return reject(new Error((data && data.error) ? data.error : 'Server error (' + xhr.status + ')'));
             }
@@ -993,16 +1002,34 @@
         });
       }
 
+      // Telegram rate limits arrive as 429 + Retry-After: wait that long (counting
+      // down in the tray) without using up a normal retry, up to a sane cap.
+      async function waitWhileBusy(job, seconds) {
+        for (let left = seconds; left > 0; left--) {
+          if (job.cancelled) throw cancelError();
+          setJob(job, { label: 'Telegram is busy — retrying in ' + left + 's' });
+          await new Promise(function (r) { setTimeout(r, 1000); });
+        }
+        if (job.cancelled) throw cancelError();
+      }
+
       async function postWithRetry(file, mode, fields, job, onProgress) {
-        let lastErr;
-        for (let i = 0; i < PART_RETRIES; i++) {
+        const MAX_BUSY_WAITS = 10;
+        let attempts = 0, busyWaits = 0, lastErr;
+        while (attempts < PART_RETRIES) {
           if (job.cancelled) throw cancelError();
           try {
             return await postFile(file, mode, fields, job, onProgress);
           } catch (err) {
             if (err.cancelled) throw err;
+            if (err.retryAfter && busyWaits < MAX_BUSY_WAITS) {
+              busyWaits++;
+              await waitWhileBusy(job, Math.min(err.retryAfter, 60));
+              continue;
+            }
             lastErr = err;
-            if (i < PART_RETRIES - 1) await new Promise(function (r) { setTimeout(r, 1000 * (i + 1)); });
+            attempts++;
+            if (attempts < PART_RETRIES) await new Promise(function (r) { setTimeout(r, 1000 * attempts); });
           }
         }
         throw lastErr;

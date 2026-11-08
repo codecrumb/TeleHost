@@ -15,7 +15,9 @@ describe('upload page', function () {
         send(body) { this.body = body; }
         abort() { this.aborted = true; this.onabort && this.onabort(); }
         progress(loaded, total) { this.upload.onprogress({ lengthComputable: true, loaded, total }); }
-        respond(status, data) {
+        getResponseHeader(name) { return (this.headers || {})[name] || null; }
+        respond(status, data, headers) {
+            this.headers = headers;
             this.upload.onload && this.upload.onload();
             this.status = status;
             this.responseText = JSON.stringify(data);
@@ -60,28 +62,31 @@ describe('upload page', function () {
         assert.ok(!document.getElementById('optionsPanel').hidden);
     });
 
-    it('uploads files one at a time with live progress, then moves links to history', async function () {
-        pick('a.png', 'b.png');
+    it('runs two uploads at a time with live progress, then moves links to history', async function () {
+        pick('a.png', 'b.png', 'c.png');
         await tick();
-        assert.deepStrictEqual(names(), ['a.png', 'b.png']);
-        assert.strictEqual(requests.length, 1, 'second file waits for its turn');
-        assert.strictEqual(label(1), 'Waiting');
+        assert.deepStrictEqual(names(), ['a.png', 'b.png', 'c.png']);
+        assert.strictEqual(requests.length, 2, 'the third file waits for a free slot');
+        assert.strictEqual(label(2), 'Waiting');
         assert.ok(document.getElementById('tray').classList.contains('stacked'));
 
         requests[0].progress(50, 100);
         assert.strictEqual(rows()[0].querySelector('.job-pct').textContent, '50%');
-        assert.strictEqual(document.getElementById('trayPct').textContent, '25%', 'combined: (50% + 0%) of two equal files');
-        assert.strictEqual(document.getElementById('trayCount').textContent, '2');
+        assert.strictEqual(document.getElementById('trayPct').textContent, '17%', '(50% + 0% + 0%) of three equal files');
+        assert.strictEqual(document.getElementById('trayCount').textContent, '3');
 
         requests[0].ok('/file/AAAA1.png');
         await tick();
-        assert.strictEqual(requests.length, 2);
+        assert.strictEqual(requests.length, 3, 'a finished upload frees its slot immediately');
         requests[1].ok('/file/BBBB2.png');
+        requests[2].ok('/file/CCCC3.png');
         await tick(20);
 
-        assert.deepStrictEqual(history().map(e => e.url), ['https://host.test/file/BBBB2.png', 'https://host.test/file/AAAA1.png']);
+        assert.deepStrictEqual(history().map(e => e.url).sort(), [
+            'https://host.test/file/AAAA1.png', 'https://host.test/file/BBBB2.png', 'https://host.test/file/CCCC3.png',
+        ]);
         assert.ok(document.getElementById('history').classList.contains('visible'));
-        assert.strictEqual(document.querySelectorAll('#historyList .result-item').length, 2);
+        assert.strictEqual(document.querySelectorAll('#historyList .result-item').length, 3);
     });
 
     it('cancels an upload in flight and lets the queue continue', async function () {
@@ -91,20 +96,22 @@ describe('upload page', function () {
         await tick();
         assert.ok(requests[0].aborted);
         assert.deepStrictEqual(names(), ['b.png']);
-        assert.strictEqual(requests.length, 2, 'next file started');
+        assert.strictEqual(requests.length, 2, 'b was already running');
         requests[1].ok('/file/BBBB2.png');
         await tick(20);
         assert.deepStrictEqual(history().map(e => e.url), ['https://host.test/file/BBBB2.png']);
     });
 
     it('cancels a waiting upload without ever sending it', async function () {
-        pick('a.png', 'b.png');
+        pick('a.png', 'b.png', 'c.png');
         await tick();
-        rows()[1].querySelector('.job-x').click();
+        assert.strictEqual(requests.length, 2);
+        rows()[2].querySelector('.job-x').click();
         requests[0].ok('/file/AAAA1.png');
+        requests[1].ok('/file/BBBB2.png');
         await tick(20);
-        assert.strictEqual(requests.length, 1);
-        assert.strictEqual(history().length, 1);
+        assert.strictEqual(requests.length, 2, 'the cancelled file was never sent');
+        assert.strictEqual(history().length, 2);
     });
 
     it('keeps a failed upload with Retry, and retry re-sends it', async function () {
@@ -128,6 +135,20 @@ describe('upload page', function () {
         await tick(20);
         assert.strictEqual(history().length, 1);
     }).timeout(15000);
+
+    it('waits out a Telegram rate limit with a countdown, then retries without failing', async function () {
+        pick('a.png');
+        await tick();
+        requests[0].respond(429, { error: 'busy', retryAfter: 1 }, { 'Retry-After': '1' });
+        await tick();
+        assert.strictEqual(label(0), 'Telegram is busy — retrying in 1s');
+        assert.strictEqual(rows()[0].dataset.state, 'uploading');
+        await tick(1200);
+        assert.strictEqual(requests.length, 2, 'retried after the wait');
+        requests[1].ok('/file/AAAA1.png');
+        await tick(20);
+        assert.strictEqual(history().length, 1);
+    });
 
     it('sends the options chosen at drop time, then resets them', async function () {
         const sel = document.getElementById('expirySel');

@@ -40,23 +40,29 @@ export const CONTENT_TYPES_BY_EXTENSION = {
     pdf: 'application/pdf',
 };
 
-// Telegram often serves files as application/octet-stream, which breaks
-// previews. Derive the type from the extension and serve previewable types inline.
-export function withFileHeaders(response, filename) {
-    const upstreamType = response.headers.get('Content-Type') || '';
-    const usable = upstreamType !== '' && !upstreamType.startsWith('application/octet-stream');
-    const extension = String(filename).split('.').pop().toLowerCase();
-    const correctedType = usable ? null : (CONTENT_TYPES_BY_EXTENSION[extension] || null);
-    const effectiveType = correctedType || upstreamType;
-    const inline = /^(image|video|audio)\//.test(effectiveType)
-        || effectiveType.startsWith('application/pdf');
+// Only these are ever rendered inline. Everything else is a download, so an
+// uploaded .html or .svg can never run script on this origin, whatever
+// Content-Type Telegram guessed for it.
+const SAFE_INLINE = /^(image\/(png|jpeg|gif|webp|avif|apng|bmp|x-icon|vnd\.microsoft\.icon)|video\/|audio\/|application\/pdf)/;
 
-    if (!correctedType && !inline) return response;
+export function withFileHeaders(response, filename) {
+    const upstreamType = (response.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase();
+    const extension = String(filename).split('.').pop().toLowerCase();
+    // Telegram often answers application/octet-stream, which breaks previews:
+    // fall back to our own extension map (which only holds safe types).
+    const type = SAFE_INLINE.test(upstreamType) ? upstreamType : (CONTENT_TYPES_BY_EXTENSION[extension] || null);
+    const safeName = String(filename).replace(/["\\\r\n]/g, '_');
 
     const headers = new Headers(response.headers);
-    if (correctedType) headers.set('Content-Type', correctedType);
-    if (inline) {
-        headers.set('Content-Disposition', `inline; filename="${String(filename).replace(/["\\\r\n]/g, '_')}"`);
+    headers.set('X-Content-Type-Options', 'nosniff');
+    if (type) {
+        headers.set('Content-Type', type);
+        headers.set('Content-Disposition', `inline; filename="${safeName}"`);
+        // Chrome refuses to show PDFs under a sandbox policy; everything else is fine.
+        if (type !== 'application/pdf') headers.set('Content-Security-Policy', 'sandbox');
+    } else {
+        headers.set('Content-Type', 'application/octet-stream');
+        headers.set('Content-Disposition', `attachment; filename="${safeName}"`);
     }
     return new Response(response.body, {
         status: response.status,
@@ -75,5 +81,13 @@ export async function servePage(env, request, name) {
     return new Response(page.body, {
         status: page.status,
         headers: { 'Content-Type': 'text/html;charset=UTF-8', 'Cache-Control': 'no-cache' },
+    });
+}
+
+export function busyResponse(retryAfter) {
+    const seconds = Number(retryAfter) > 0 ? Math.ceil(Number(retryAfter)) : 5;
+    return new Response('Telegram is busy, retry shortly.', {
+        status: 429,
+        headers: { 'Content-Type': 'text/plain;charset=UTF-8', 'Retry-After': String(seconds), 'Cache-Control': 'no-store' },
     });
 }

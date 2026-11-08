@@ -1,7 +1,7 @@
 import { isCrawler, videoPreviewPage } from '../_lib/preview.js';
 import { verifyManifest } from '../_lib/manifest.js';
-import { isRefererAllowed, servePage, withFileHeaders } from '../_lib/serve.js';
-import { deleteMessage, fetchTelegramFile, getFilePath, isValidFileId } from '../_lib/telegram.js';
+import { busyResponse, isRefererAllowed, servePage, withFileHeaders } from '../_lib/serve.js';
+import { RateLimitError, deleteMessage, fetchTelegramFile, getFilePath, isValidFileId } from '../_lib/telegram.js';
 
 const MAX_MANIFEST_BYTES = 8 * 1024;
 
@@ -27,7 +27,16 @@ async function loadManifest(env, manifestId) {
 
 // /s/<manifest_id>.<ext>: serves the file a signed manifest points at, until
 // the manifest's expiry. The real file id is never exposed to visitors.
-export async function onRequest({ request, env, params }) {
+export async function onRequest(context) {
+    try {
+        return await serve(context);
+    } catch (error) {
+        if (error instanceof RateLimitError) return busyResponse(error.retryAfter);
+        throw error;
+    }
+}
+
+async function serve({ request, env, params }) {
     if (request.method !== 'GET' && request.method !== 'HEAD') {
         return text('Method not allowed', 405);
     }
@@ -72,13 +81,14 @@ export async function onRequest({ request, env, params }) {
     if (!filePath) return text('Not found', 404);
 
     const upstream = await fetchTelegramFile(env, filePath, request);
+    if (upstream.status === 429) return busyResponse(upstream.headers.get('Retry-After'));
     if (!upstream.ok && upstream.status !== 206) return text('Upstream error', 502);
 
     // The stored bytes are ciphertext: never label them with the original type.
     const served = manifest.enc
         ? new Response(upstream.body, {
             status: upstream.status,
-            headers: { 'Content-Type': 'application/octet-stream' },
+            headers: { 'Content-Type': 'application/octet-stream', 'X-Content-Type-Options': 'nosniff' },
         })
         : withFileHeaders(upstream, manifest.name || params.id);
     const headers = new Headers(served.headers);

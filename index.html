@@ -554,7 +554,7 @@
   <!-- Upload history (persisted in localStorage) -->
   <div id="history">
     <div class="history-header">
-      <span>History</span>
+      <span id="historyTitle">History</span>
       <span class="history-actions">
         <button id="historyCopyAll" type="button">Copy all</button>
         <button id="historyClear" type="button" aria-label="Clear upload history" title="Clear history">&times;</button>
@@ -579,6 +579,7 @@
   <input type="file" id="fileInput" multiple>
   <input type="file" id="folderInput" webkitdirectory>
 
+  <script src="/settings.js"></script>
   <script>
     (function () {
       const dropzone      = document.getElementById('dropzone');
@@ -600,6 +601,8 @@
       const CHUNK_SIZE = 19 * 1024 * 1024;
       const MAX_FILE_SIZE = 1024 * 1024 * 1024; // 1 GB — the join page assembles in memory
       const PART_RETRIES = 3;
+
+      const settings = THSettings.load(); // power-user options, see /settings
 
       const ZIP_SIZE_LIMIT = 45 * 1024 * 1024; // 45 MB — Telegram bot API limit is 50 MB
 
@@ -927,8 +930,8 @@
         pump();
       }
 
-      // Two at a time: more would hit Telegram's per-chat message limit sooner.
-      const UPLOAD_CONCURRENCY = 2;
+      // Two at a time by default: more hits Telegram's per-chat message limit sooner.
+      const UPLOAD_CONCURRENCY = settings.concurrency;
       let running = 0;
 
       function pump() {
@@ -1313,18 +1316,24 @@
 
       // ── URL shortener ──────────────────────────────────────────────────
       async function shortenUrl(url) {
-        if (!url) return url;
+        if (!url || settings.shortener === 'none') return url;
 
         const encoded = encodeURIComponent(url);
-        const services = [
-          () => fetch('https://da.gd/shorten?url=' + encoded, { signal: AbortSignal.timeout(4000) }).then(r => r.text()),
-          () => fetch('https://tinyurl.com/api-create.php?url=' + encoded, { signal: AbortSignal.timeout(4000) }).then(r => r.text()),
-        ];
+        const ask = (endpoint) => () =>
+          fetch(endpoint, { signal: AbortSignal.timeout(4000) }).then(r => r.text());
+        const dagd    = ask('https://da.gd/shorten?url=' + encoded);
+        const tinyurl = ask('https://tinyurl.com/api-create.php?url=' + encoded);
+        const services = {
+          auto:    [dagd, tinyurl],
+          dagd:    [dagd],
+          tinyurl: [tinyurl],
+          custom:  [ask(settings.customShortener.split('{url}').join(encoded))],
+        }[settings.shortener] || [dagd, tinyurl];
 
         for (const call of services) {
           try {
             const short = (await call()).trim();
-            if (short && short.startsWith('http')) return short;
+            if (/^https?:\/\/\S+$/.test(short)) return short;
           } catch (_) {
             // try next service
           }
@@ -1369,9 +1378,14 @@
 
       // ── Upload history (localStorage) ──────────────────────────────────
       const HISTORY_KEY = 'th_history';
-      const HISTORY_MAX = 100;
+      // With history off (0) nothing is persisted: links stay in this list until
+      // the page closes, so a finished upload is never lost from view.
+      const SESSION_ONLY = settings.historyMax === 0;
+      const HISTORY_MAX = SESSION_ONLY ? 500 : settings.historyMax;
+      let sessionHistory = [];
 
       function loadHistory() {
+        if (SESSION_ONLY) return sessionHistory.slice();
         try {
           const list = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
           return Array.isArray(list) ? list : [];
@@ -1381,6 +1395,10 @@
       }
 
       function writeHistory(list) {
+        if (SESSION_ONLY) {
+          sessionHistory = list.slice(0, HISTORY_MAX);
+          return;
+        }
         try {
           localStorage.setItem(HISTORY_KEY, JSON.stringify(list.slice(0, HISTORY_MAX)));
         } catch (_) { /* storage unavailable — history just won't persist */ }
@@ -1456,10 +1474,12 @@
       });
 
       historyClear.addEventListener('click', function () {
+        sessionHistory = [];
         try { localStorage.removeItem(HISTORY_KEY); } catch (_) {}
         renderHistory();
       });
 
+      if (SESSION_ONLY) document.getElementById('historyTitle').textContent = 'This session';
       renderHistory();
       // ── Folder drop (entry API) ────────────────────────────────────────
       // A folder becomes one zip. While it is read and zipped it shows in the tray.

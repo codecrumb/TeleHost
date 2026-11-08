@@ -3,7 +3,10 @@ const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');
 
-const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+const settingsJs = fs.readFileSync(path.join(__dirname, '..', 'settings.js'), 'utf8');
+// jsdom does not fetch external scripts, so inline the shared settings script
+const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8')
+    .replace('<script src="/settings.js"></script>', () => `<script>${settingsJs}</script>`);
 const tick = (ms = 5) => new Promise(r => setTimeout(r, ms));
 const until = async (fn, ms = 10000) => {
     const end = Date.now() + ms;
@@ -31,20 +34,29 @@ describe('upload page', function () {
         ok(src) { this.respond(200, [{ src }]); }
     }
 
-    beforeEach(function () {
-        requests = [];
+    let fetchLog;
+
+    function makePage(storedSettings) {
+        fetchLog = [];
         dom = new JSDOM(html, {
             url: 'https://host.test/',
             runScripts: 'dangerously',
             pretendToBeVisual: true,
             beforeParse(win) {
                 win.XMLHttpRequest = FakeXHR;
-                win.fetch = () => Promise.reject(new Error('offline')); // shorteners fail -> full URL is kept
+                // shorteners fail -> the full URL is kept
+                win.fetch = (url) => { fetchLog.push(String(url)); return Promise.reject(new Error('offline')); };
                 Object.defineProperty(win, 'crypto', { value: require('crypto').webcrypto, configurable: true });
+                if (storedSettings) win.localStorage.setItem('th_settings', JSON.stringify(storedSettings));
             },
         });
         window = dom.window;
         document = window.document;
+    }
+
+    beforeEach(function () {
+        requests = [];
+        makePage();
     });
     afterEach(function () { window.close(); });
 
@@ -255,5 +267,79 @@ describe('upload page', function () {
         assert.strictEqual(opened, 0);
         document.getElementById('dropzone').dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
         assert.strictEqual(opened, 1);
+    });
+
+    describe('with power-user settings', function () {
+        const finish = async (n) => {
+            for (let i = 0; i < n; i++) {
+                await until(() => requests.length > i);
+                requests[i].ok(`/file/ID${String(i).padStart(4, '0')}.png`);
+                await tick();
+            }
+            await tick(30);
+        };
+
+        it('history size 0 keeps links for the session only, and stores nothing', async function () {
+            window.close();
+            makePage({ historyMax: 0 });
+            assert.strictEqual(document.getElementById('historyTitle').textContent, 'This session');
+            pick('a.png');
+            await finish(1);
+            assert.strictEqual(document.querySelectorAll('#historyList .result-item').length, 1);
+            assert.strictEqual(window.localStorage.getItem('th_history'), null);
+            document.getElementById('historyClear').click();
+            assert.strictEqual(document.querySelectorAll('#historyList .result-item').length, 0);
+        });
+
+        it('a history size limit keeps only the newest links', async function () {
+            window.close();
+            makePage({ historyMax: 2 });
+            pick('a.png', 'b.png', 'c.png');
+            await finish(3);
+            assert.strictEqual(history().length, 2);
+        });
+
+        it('shortener "none" never contacts a shortening service', async function () {
+            window.close();
+            makePage({ shortener: 'none' });
+            pick('a.png');
+            await finish(1);
+            assert.deepStrictEqual(fetchLog, []);
+            assert.strictEqual(history().length, 1);
+        });
+
+        it('a custom shortener gets the URL-encoded link and its short link is used', async function () {
+            window.close();
+            makePage({ shortener: 'custom', customShortener: 'https://short.example/s?u={url}' });
+            window.fetch = async (url) => {
+                fetchLog.push(String(url));
+                return { text: async () => 'https://short.example/abc' };
+            };
+            pick('a.png');
+            await finish(1);
+            await tick(30);
+            assert.deepStrictEqual(fetchLog, ['https://short.example/s?u=' + encodeURIComponent('https://host.test/file/ID0000.png')]);
+            assert.deepStrictEqual(history().map(e => e.url), ['https://short.example/abc']);
+        });
+
+        it('an invalid custom shortener is ignored and falls back to automatic', async function () {
+            window.close();
+            makePage({ shortener: 'custom', customShortener: 'http://insecure.example/?u={url}' });
+            pick('a.png');
+            await finish(1);
+            assert.ok(fetchLog.length > 0);
+            assert.ok(fetchLog.every(u => u.startsWith('https://da.gd/') || u.startsWith('https://tinyurl.com/')));
+        });
+
+        it('concurrency 1 uploads one file at a time', async function () {
+            window.close();
+            makePage({ concurrency: 1 });
+            pick('a.png', 'b.png');
+            await tick();
+            assert.strictEqual(requests.length, 1);
+            requests[0].ok('/file/ID0000.png');
+            await tick();
+            assert.strictEqual(requests.length, 2);
+        });
     });
 });

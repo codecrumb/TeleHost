@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>TeleHost – Settings</title>
+  <link rel="icon" type="image/x-icon" href="/favicon.ico">
+  <link rel="icon" type="image/png" sizes="32x32" href="/assets/icons/favicon-32.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/assets/icons/apple-touch-icon.png">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0d0d0d; color: #e0e0e0; min-height: 100vh;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      display: flex; flex-direction: column; align-items: center; padding: 48px 16px 64px;
+    }
+    h1 { font-size: 2rem; font-weight: 700; letter-spacing: -0.5px; margin-bottom: 8px; }
+    h1 a { color: #fff; text-decoration: none; }
+    .sub { color: #777; font-size: 0.85rem; margin-bottom: 32px; text-align: center; }
+    .card {
+      width: 100%; max-width: 560px; background: #1a1a1a; border: 1px solid #2a2a2a;
+      border-radius: 16px; padding: 12px 28px; display: flex; flex-direction: column;
+    }
+    .row { padding: 18px 0; display: flex; flex-direction: column; gap: 8px; }
+    .row + .row { border-top: 1px solid #262626; }
+    label, .label { font-size: 0.95rem; color: #fff; font-weight: 600; }
+    .hint { font-size: 0.8rem; color: #777; line-height: 1.4; }
+    .hint.error { color: #ff6b6b; }
+    input[type="number"], input[type="text"], select {
+      width: 100%; max-width: 360px; padding: 10px 12px; font: inherit; font-size: 0.9rem; color: #fff;
+      background: #111; border: 1px solid #333; border-radius: 10px;
+    }
+    input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid #4a9eff; outline-offset: 2px; }
+    .actions { display: flex; flex-wrap: wrap; gap: 10px; }
+    button {
+      padding: 9px 16px; font: inherit; font-size: 0.85rem; color: #ddd; background: transparent;
+      border: 1px solid #444; border-radius: 8px; cursor: pointer;
+    }
+    button:hover { border-color: #aaa; color: #fff; }
+    .status { margin-top: 20px; min-height: 1.2em; font-size: 0.85rem; color: #4ade80; }
+    .back { margin-top: 12px; color: #777; font-size: 0.85rem; text-decoration: none; }
+    .back:hover { color: #ccc; }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <h1><a href="/">TeleHost</a></h1>
+  <p class="sub">Settings are saved in this browser only.</p>
+
+  <div class="card">
+    <div class="row">
+      <label for="historyMax">History size</label>
+      <input type="number" id="historyMax" min="0" max="500" step="1">
+      <div class="hint">How many finished links to remember (0&ndash;500). With 0 nothing is stored: links only stay in the list until you leave the page.</div>
+    </div>
+
+    <div class="row">
+      <label for="shortener">Link shortener</label>
+      <select id="shortener">
+        <option value="auto">Automatic (da.gd, then tinyurl)</option>
+        <option value="dagd">da.gd only</option>
+        <option value="tinyurl">tinyurl only</option>
+        <option value="none">None (keep the full link)</option>
+        <option value="custom">Custom service…</option>
+      </select>
+      <div id="customRow" class="hidden" style="display:flex; flex-direction:column; gap:8px;">
+        <input type="text" id="customShortener" placeholder="https://example.com/shorten?url={url}" autocomplete="off" spellcheck="false" aria-label="Custom shortener URL template">
+        <div class="hint" id="customHint">An https address containing <code>{url}</code>, which is replaced by your link (URL-encoded). It must answer with the short link as plain text. Your link is sent to that service.</div>
+      </div>
+    </div>
+
+    <div class="row">
+      <label for="concurrency">Uploads at the same time</label>
+      <select id="concurrency">
+        <option value="1">1</option>
+        <option value="2">2 (default)</option>
+        <option value="3">3</option>
+      </select>
+      <div class="hint">More is faster for many small files, but Telegram limits how many messages a bot can send per minute; if it pushes back, uploads wait and retry on their own.</div>
+    </div>
+
+    <div class="row">
+      <span class="label">Housekeeping</span>
+      <div class="actions">
+        <button type="button" id="clearHistory">Clear history</button>
+        <button type="button" id="clearResume">Forget partial uploads</button>
+        <button type="button" id="reset">Reset all settings</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="status" id="status" role="status"></div>
+  <a class="back" href="/">&larr; Back to uploads</a>
+
+  <script src="/settings.js"></script>
+  <script>
+    (function () {
+      var el = {
+        historyMax: document.getElementById('historyMax'),
+        shortener: document.getElementById('shortener'),
+        customRow: document.getElementById('customRow'),
+        customShortener: document.getElementById('customShortener'),
+        customHint: document.getElementById('customHint'),
+        concurrency: document.getElementById('concurrency'),
+        status: document.getElementById('status'),
+      };
+      var customHintText = el.customHint.textContent;
+      var statusTimer = null;
+
+      function say(message) {
+        el.status.textContent = message;
+        clearTimeout(statusTimer);
+        statusTimer = setTimeout(function () { el.status.textContent = ''; }, 2500);
+      }
+
+      function paint(settings) {
+        el.historyMax.value = settings.historyMax;
+        el.shortener.value = settings.shortener;
+        el.customShortener.value = settings.customShortener;
+        el.concurrency.value = String(settings.concurrency);
+        el.customRow.classList.toggle('hidden', el.shortener.value !== 'custom');
+      }
+
+      function read() {
+        return {
+          historyMax: el.historyMax.value,
+          shortener: el.shortener.value,
+          customShortener: el.customShortener.value.trim(),
+          concurrency: el.concurrency.value,
+        };
+      }
+
+      function commit() {
+        var wanted = read();
+        el.customRow.classList.toggle('hidden', wanted.shortener !== 'custom');
+        var customBad = wanted.shortener === 'custom' && !THSettings.validTemplate(wanted.customShortener);
+        el.customHint.textContent = customBad ? 'Needs an https address that contains {url}. Not saved yet.' : customHintText;
+        el.customHint.classList.toggle('error', customBad);
+        if (customBad) return;
+        var saved = THSettings.save(wanted);
+        // Turning history off also removes what was already stored.
+        if (saved.historyMax === 0) { try { localStorage.removeItem('th_history'); } catch (_) {} }
+        if (String(saved.historyMax) !== String(wanted.historyMax)) el.historyMax.value = saved.historyMax;
+        say('Saved');
+      }
+
+      ['change', 'input'].forEach(function (type) {
+        el.historyMax.addEventListener(type, function () { if (el.historyMax.value !== '') commit(); });
+        el.customShortener.addEventListener(type, commit);
+      });
+      el.shortener.addEventListener('change', commit);
+      el.concurrency.addEventListener('change', commit);
+
+      document.getElementById('clearHistory').addEventListener('click', function () {
+        try { localStorage.removeItem('th_history'); } catch (_) {}
+        say('History cleared');
+      });
+      document.getElementById('clearResume').addEventListener('click', function () {
+        try {
+          Object.keys(localStorage).filter(function (k) { return k.indexOf('th_resume:') === 0; })
+            .forEach(function (k) { localStorage.removeItem(k); });
+        } catch (_) {}
+        say('Partial uploads forgotten');
+      });
+      document.getElementById('reset').addEventListener('click', function () {
+        paint(THSettings.save(THSettings.DEFAULTS));
+        say('Settings reset');
+      });
+
+      paint(THSettings.load());
+    })();
+  </script>
+</body>
+</html>

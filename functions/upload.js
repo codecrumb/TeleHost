@@ -29,6 +29,9 @@ export async function onRequestPost(context) {
         const telegramFormData = new FormData();
         telegramFormData.append("chat_id", env.TG_Chat_ID);
 
+        const caption = uploaderCaption(request, env);
+        if (caption) telegramFormData.append("caption", caption);
+
         const compressionMode = formData.get('compressionMode') || 'compressed';
 
         let apiEndpoint;
@@ -82,6 +85,16 @@ export async function onRequestPost(context) {
     }
 }
 
+// Off unless LOG_UPLOADER_IP=true. The IP comes from Cloudflare's own header,
+// never from client-controlled ones like X-Forwarded-For.
+function uploaderCaption(request, env) {
+    if (String(env.LOG_UPLOADER_IP).toLowerCase() !== 'true') return null;
+    const ip = request.headers.get('CF-Connecting-IP');
+    if (!ip) return null;
+    const country = request.cf && request.cf.country;
+    return country ? `Uploader: ${ip} (${country})` : `Uploader: ${ip}`;
+}
+
 function getFileId(response) {
     if (!response.ok || !response.result) return null;
 
@@ -115,6 +128,7 @@ async function sendToTelegram(formData, apiEndpoint, env, retryCount = 0) {
             console.log('Retrying image as document...');
             const newFormData = new FormData();
             newFormData.append('chat_id', formData.get('chat_id'));
+            if (formData.get('caption')) newFormData.append('caption', formData.get('caption'));
             newFormData.append('document', formData.get('photo'));
             const fallbackResult = await sendToTelegram(newFormData, 'sendDocument', env, retryCount + 1);
             if (fallbackResult.success) fallbackResult.usedFallback = true;

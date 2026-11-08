@@ -15,6 +15,7 @@ Free file hosting on Cloudflare Pages, using a Telegram channel as storage. No K
 | `TG_Bot_Token` | `123468:AAxxxGKrn5` | Bot token from BotFather (required). |
 | `TG_Chat_ID` | `-1001234567` | Channel the bot uploads to (required). |
 | `UPLOAD_BASIC_USER` / `UPLOAD_BASIC_PASS` | | Set both to require Basic auth for uploads. |
+| `LOG_UPLOADER_IP` | `true` | Adds the uploader's IP and country to each file's Telegram message. Off by default. |
 | `ALLOWED_REFERERS` | `example.com,*.example.org` | Hostname allowlist for anti-hotlinking. Empty referers always pass. |
 
 ## How it works

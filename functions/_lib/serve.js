@@ -1,43 +1,3 @@
-// ALLOWED_REFERERS is a comma-separated hostname allowlist ("example.com,*.example.org").
-// Empty referers (direct visits, curl, native apps) always pass, as does the
-// deployment's own origin; the feature is off when the var is unset.
-// ALLOWED_REFERERS: only the listed sites may send people to, or embed, your
-// files. By default that covers EVERY request, a plain click on a link included,
-// because a page load carries the Referer of wherever the link was clicked (a web
-// chat, a shortener, a search page). ALLOW_LINK_CLICKS=true relaxes exactly that:
-// a top-level page load (Sec-Fetch-Dest: document) is let through from any site,
-// while images, video, iframes and the like are still checked.
-export function isRefererAllowed(env, request, url) {
-    if (String(env.ALLOW_LINK_CLICKS).toLowerCase() === 'true' && request.headers.get('Sec-Fetch-Dest') === 'document') {
-        return true;
-    }
-
-    const allowlist = String(env.ALLOWED_REFERERS || '')
-        .split(',')
-        .map(entry => entry.trim().toLowerCase())
-        .filter(Boolean);
-    if (allowlist.length === 0) return true;
-
-    const referer = request.headers.get('Referer');
-    if (!referer) return true;
-
-    let host;
-    try {
-        host = new URL(referer).hostname.toLowerCase();
-    } catch {
-        return false;
-    }
-    if (host === url.hostname.toLowerCase()) return true;
-
-    return allowlist.some(pattern => {
-        if (pattern.startsWith('*.')) {
-            const base = pattern.slice(2);
-            return host === base || host.endsWith('.' + base);
-        }
-        return host === pattern;
-    });
-}
-
 // svg is deliberately absent: serving user uploads as image/svg+xml would
 // allow stored XSS on the deployment's own origin.
 export const CONTENT_TYPES_BY_EXTENSION = {
@@ -118,16 +78,5 @@ export function busyResponse(retryAfter) {
         status: 429,
         headers: { 'Content-Type': 'text/plain;charset=UTF-8', 'Retry-After': String(seconds), 'Cache-Control': 'no-store' },
     });
-}
-
-// The 403 names the site the request came from, so an operator who sees it can tell
-// which hostname to add to ALLOWED_REFERERS.
-export function hotlinkResponse(request) {
-    let from = '';
-    try { from = new URL(request.headers.get('Referer')).hostname; } catch { /* no usable Referer */ }
-    return new Response(
-        'Hotlinking is not allowed on this deployment.' + (from ? ` (opened from ${from})` : ''),
-        { status: 403, headers: { 'Content-Type': 'text/plain;charset=UTF-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } }
-    );
 }
 

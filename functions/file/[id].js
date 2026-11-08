@@ -1,5 +1,5 @@
 import { isCrawler, videoPreviewPage } from '../_lib/preview.js';
-import { CONTENT_TYPES_BY_EXTENSION, busyResponse, hotlinkResponse, isRefererAllowed, withFileHeaders } from '../_lib/serve.js';
+import { CONTENT_TYPES_BY_EXTENSION, busyResponse, withFileHeaders } from '../_lib/serve.js';
 import { RateLimitError, fetchTelegramFile, getFilePath, isValidFileId } from '../_lib/telegram.js';
 
 export async function onRequest(context) {
@@ -17,9 +17,6 @@ async function serve({ request, env, params }) {
     }
 
     const url = new URL(request.url);
-
-    // Anti-hotlinking: reject disallowed referers before spending upstream bandwidth
-    if (!isRefererAllowed(env, request, url)) return hotlinkResponse(request);
 
     // /file/<file_id>.<ext>, or /file/<video_id>~<thumbnail_id>.<ext> for videos
     const filename = String(params.id);

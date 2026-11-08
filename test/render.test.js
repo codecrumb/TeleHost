@@ -119,10 +119,10 @@ describe('rendering uploaded HTML in the browser (/v/)', function () {
             assert.strictEqual(res.status, 200);
         });
 
-        it('still refuses other sites embedding it when a referer allowlist is set', async function () {
-            const env = { ...on, ALLOWED_REFERERS: 'good.example' };
-            const embedded = await visit({ env, query: '?open=1', headers: { 'Sec-Fetch-Site': 'same-origin', 'Sec-Fetch-Dest': 'iframe', Referer: 'https://evil.example/' } });
-            assert.strictEqual(embedded.status, 403);
+        it('does not judge visitors by where they came from', async function () {
+            const env = { ...on, ALLOWED_UPLOAD_ORIGINS: 'good.example' };
+            const clicked = await visit({ env, headers: { 'Sec-Fetch-Dest': 'document', Referer: 'https://web.whatsapp.com/' } });
+            assert.strictEqual(clicked.status, 200);
         });
     });
 

@@ -16,16 +16,6 @@ export function authenticateUpload(request, env) {
         return json({ error: 'UPLOAD_BASIC_USER and UPLOAD_BASIC_PASS must both be set' }, 500);
     }
 
-    // Browsers resend cached Basic credentials on cross-site requests, so a page on
-    // another origin could otherwise push files as the logged-in operator. Scripts
-    // and curl send neither header and are unaffected.
-    const site = request.headers.get('Sec-Fetch-Site');
-    const origin = request.headers.get('Origin');
-    if ((site && site !== 'same-origin' && site !== 'none') ||
-        (origin && origin !== new URL(request.url).origin)) {
-        return json({ error: 'Cross-site requests are not allowed.' }, 403);
-    }
-
     const challenge = { 'WWW-Authenticate': 'Basic realm="upload", charset="UTF-8"' };
     const [scheme, encoded] = (request.headers.get('Authorization') || '').split(' ');
     if (!encoded || scheme !== 'Basic') {

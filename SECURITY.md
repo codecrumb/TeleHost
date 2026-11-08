@@ -10,8 +10,8 @@ panel and no third-party telemetry.
 |---|---|---|
 | `POST /upload` | Sends a file (or a chunk) to the Telegram channel | Public, or HTTP Basic if `UPLOAD_BASIC_USER` / `UPLOAD_BASIC_PASS` are set |
 | `POST /finalize` | Turns uploaded chunks into one signed `/s/` link (expiry / password) | Same as `/upload` |
-| `GET /file/<id>[~<thumb>].<ext>` | Streams a file from Telegram | Public (optional referer allowlist) |
-| `GET /s/<id>[.<ext>]` | Expiring / password-protected links backed by a signed manifest, for files of any size (`?meta`, `?part=N` for big ones) | Public (optional referer allowlist) |
+| `GET /file/<id>[~<thumb>].<ext>` | Streams a file from Telegram | Public |
+| `GET /s/<id>[.<ext>]` | Expiring / password-protected links backed by a signed manifest, for files of any size (`?meta`, `?part=N` for big ones) | Public |
 | `GET /join/<id>` | Static page that reassembles plain chunked files in the browser | Public |
 
 The only secret is `TG_Bot_Token`. It is used server-side only, is never logged
@@ -56,9 +56,20 @@ or sent to clients, and is the HMAC key material for manifests (see below).
   previews known-safe media types and downloads everything else as plain bytes.
 - **Upload auth** (when `UPLOAD_BASIC_USER` / `UPLOAD_BASIC_PASS` are set) is
   constant-time, does not reveal the password length, fails closed if either
-  variable is blank or only one is set, and refuses cross-site requests
-  (`Sec-Fetch-Site` / `Origin` checks), since browsers resend cached Basic
-  credentials on cross-site form posts.
+  variable is blank or only one is set.
+- **Web pages on other sites cannot upload through their visitors' browsers**
+  unless listed in `ALLOWED_UPLOAD_ORIGINS` (hostnames; the older name
+  `ALLOWED_REFERERS` is still read). `/upload` and `/finalize` accept a request
+  only if it has no browser headers at all (curl, scripts, apps), comes from this
+  site's own page, or has an `Origin` that is https (or localhost) and listed.
+  That also stops a stranger's page from riding on cached Basic-auth
+  credentials. Listed sites get CORS headers (with credentials allowed, so a
+  listed page can reach a password-protected deployment) and preflight answers;
+  everyone else gets a plain 403 with no CORS headers. The list is read only
+  inside the Worker and never returned; the one thing a visitor can do is probe
+  whether a domain they already guessed is listed, by sending a forged `Origin`.
+  Programs that send no browser headers are not affected, so this is not a
+  substitute for an upload password.
 - **Rate limits are passed on, not absorbed.** If Telegram answers 429 the
   worker returns 429 with `Retry-After` immediately (it never sleeps), and the
   browser waits and retries.
@@ -79,7 +90,7 @@ or sent to clients, and is the HMAC key material for manifests (see below).
   uploader ticked the option, so knowing some other file's id does not let anyone
   turn it into a rendered page. The page therefore has an opaque origin: it cannot read
   this site's `localStorage` (history, settings), cannot use cached Basic-auth
-  credentials (its requests are cross-origin and the upload CSRF check refuses
+  credentials (its requests are cross-origin, with Origin `null`, and the upload origin check refuses
   them), and cannot be framed by others (`frame-ancestors 'none'`). The real page
   is only served to a navigation that comes from the notice (`Sec-Fetch-Site:
   same-origin`, or a same-origin Referer in older browsers), so sharing the
@@ -92,8 +103,9 @@ or sent to clients, and is the HMAC key material for manifests (see below).
 ## Known limitations
 
 - **Public uploads are an abuse risk (open, by design).** Without Basic auth
-  anyone can store files in your channel and serve them from your domain.
-  There is no per-IP limit in the app. Set `UPLOAD_BASIC_USER` /
+  anyone running a script or curl can store files in your channel and serve them
+  from your domain (other websites cannot use their visitors' browsers to do it,
+  see above). There is no per-IP limit in the app. Set `UPLOAD_BASIC_USER` /
   `UPLOAD_BASIC_PASS`, or add a Cloudflare rate-limiting rule or Turnstile in
   front of `/upload`.
 - **Deleting a Telegram message does not revoke the file.** Measured: a file
@@ -153,12 +165,10 @@ or sent to clients, and is the HMAC key material for manifests (see below).
   (the default "smart" setting). A link that needs no password never starts a
   download just by being opened, unless the visitor chose "always" in their own
   browser settings.
-- **Referer allowlisting is best-effort.** With `ALLOWED_REFERERS` set it judges
-  every request, plain clicks included, so a link opened from a site that is not
-  listed gets the hotlink message (which names that site). `ALLOW_LINK_CLICKS=true`
-  exempts top-level page loads (`Sec-Fetch-Dest: document`) but still checks
-  embeds. Empty referers always pass, a referer can be forged outside a browser,
-  and browsers too old to send Fetch Metadata fall back to the plain Referer rule.
+- **Embedding and link clicks are not restricted.** Other sites can embed your
+  files (each view is a Function request on your daily quota) and anyone can open
+  a link from anywhere, including through a URL shortener. There is no Referer
+  based blocking of any kind.
 - **No script-src Content-Security-Policy on the app's own pages**
   (`index.html`, `join.html`, `unlock.html`, `settings.html`): they use inline
   scripts. A restricted policy (`frame-ancestors`, `base-uri`, `object-src`,

@@ -1,4 +1,4 @@
-import { busyResponse, hotlinkResponse, isRefererAllowed, servePage } from '../_lib/serve.js';
+import { busyResponse, servePage } from '../_lib/serve.js';
 import { ConfigError, verifyRenderLink } from '../_lib/manifest.js';
 import { htmlRenderEnabled } from '../_lib/options.js';
 import { RateLimitError, fetchTelegramFile, getFilePath, isValidFileId } from '../_lib/telegram.js';
@@ -45,7 +45,6 @@ async function serve({ request, env, params }) {
     if (!htmlRenderEnabled(env)) return text('Not found', 404);
 
     const url = new URL(request.url);
-    if (!isRefererAllowed(env, request, url)) return hotlinkResponse(request);
 
     const filename = String(params.id);
     const [fileId, tag] = filename.split('.')[0].split('~');

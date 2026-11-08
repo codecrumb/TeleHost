@@ -1,9 +1,21 @@
 import { authenticateUpload } from './_lib/auth.js';
 import { linkSecret, signReceipt, signRenderLink } from './_lib/manifest.js';
 import { checkEncryption, checkExpiry, cleanMeta, htmlRenderEnabled } from './_lib/options.js';
+import { checkUploadOrigin, preflight, refusal, withCors } from './_lib/origin.js';
 import { RateLimitedError, createManifestLink, failure, getFileId, sendToTelegram } from './_lib/send.js';
 
+// Web pages on other sites may only upload if listed (see _lib/origin.js).
 export async function onRequestPost(context) {
+    const gate = checkUploadOrigin(context.request, context.env);
+    if (!gate.ok) return refusal();
+    return withCors(await handleUpload(context), gate.origin);
+}
+
+export function onRequestOptions({ request, env }) {
+    return preflight(request, env);
+}
+
+async function handleUpload(context) {
     const { request, env } = context;
 
     try {

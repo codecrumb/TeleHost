@@ -1,6 +1,7 @@
 import { authenticateUpload } from './_lib/auth.js';
 import { linkSecret, verifyReceipt } from './_lib/manifest.js';
 import { checkEncryption, checkExpiry, cleanMeta } from './_lib/options.js';
+import { checkUploadOrigin, preflight, refusal, withCors } from './_lib/origin.js';
 import { RateLimitedError, createManifestLink } from './_lib/send.js';
 import { isValidFileId } from './_lib/telegram.js';
 
@@ -17,7 +18,17 @@ const json = (body, status, headers = {}) => new Response(JSON.stringify(body), 
 // POST /finalize: the browser has uploaded a big file as parts (each answered with
 // a signed receipt) and now asks for one /s/ link over them, with an optional expiry
 // and password parameters. Only parts the server itself stored are accepted.
-export async function onRequestPost({ request, env }) {
+export async function onRequestPost(context) {
+    const gate = checkUploadOrigin(context.request, context.env);
+    if (!gate.ok) return refusal();
+    return withCors(await handleFinalize(context), gate.origin);
+}
+
+export function onRequestOptions({ request, env }) {
+    return preflight(request, env);
+}
+
+async function handleFinalize({ request, env }) {
     try {
         const authResponse = authenticateUpload(request, env);
         if (authResponse) return authResponse;

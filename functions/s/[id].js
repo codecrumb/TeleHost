@@ -1,5 +1,5 @@
 import { isCrawler, videoPreviewPage } from '../_lib/preview.js';
-import { openManifest } from '../_lib/manifest.js';
+import { ConfigError, openManifest } from '../_lib/manifest.js';
 import { busyResponse, isRefererAllowed, servePage, withFileHeaders } from '../_lib/serve.js';
 import { RateLimitError, deleteMessage, fetchTelegramFile, getFilePath, isValidFileId } from '../_lib/telegram.js';
 
@@ -57,6 +57,7 @@ export async function onRequest(context) {
         return await serve(context);
     } catch (error) {
         if (error instanceof RateLimitError) return busyResponse(error.retryAfter);
+        if (error instanceof ConfigError) return text(error.message, 500);
         throw error;
     }
 }

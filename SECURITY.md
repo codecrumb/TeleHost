@@ -38,7 +38,8 @@ or sent to clients, and is the HMAC key material for manifests (see below).
   stored as a document in the channel. Two things can go wrong with that:
   anyone can upload documents through `/upload`, and `/file/<id>` serves any
   document, including a manifest whose id is in the link. So a manifest is
-  encrypted and authenticated (AES-GCM, key derived from the bot token). What is
+  encrypted and authenticated (AES-GCM, key derived with HKDF from `LINK_SECRET`,
+  or from the bot token if that is not set). What is
   stored is unreadable, which keeps the real file ids, message ids and file names
   secret from link holders (a plain manifest would let them read the real file id
   and bypass expiry), and any edit or forgery fails authentication, so nobody can
@@ -77,8 +78,12 @@ or sent to clients, and is the HMAC key material for manifests (see below).
   was still downloadable 387 seconds after `deleteMessage` succeeded. Expiry
   deletes the message as cleanup, but the guarantee comes from the manifest
   check. For the same reason there are no one-time downloads.
-- **Rotating `TG_Bot_Token` breaks existing `/s/` links**, because the manifest
-  key derives from it (plain `/file/` links are unaffected).
+- **Changing the link secret breaks existing `/s/` links.** The secret is
+  `LINK_SECRET` if set (recommended: `openssl rand -hex 32`, at least 32
+  characters; a shorter or blank value is refused rather than used), otherwise
+  the bot token. Without `LINK_SECRET`, rotating the bot token breaks them too.
+  Plain `/file/` links are never affected. Keys for sealing manifests and signing
+  receipts are separate HKDF outputs of that secret.
 - **Cleanup on expiry is lazy and rate limited.** Messages are deleted when
   someone opens an expired link, at most once per link per hour per Cloudflare
   location (remembered in the edge cache), one slice of up to 40 messages at a

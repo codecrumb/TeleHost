@@ -1,5 +1,7 @@
 // Sending to Telegram, shared by /upload and /finalize.
 
+import { sealManifest } from './manifest.js';
+
 // Thrown when Telegram rate limits an upload; becomes a 429 the browser retries.
 export class RateLimitedError extends Error {
     constructor(retryAfter) {
@@ -68,12 +70,12 @@ export async function sendToTelegram(formData, apiEndpoint, env, retryCount = 0)
     }
 }
 
-// Stores a signed manifest as a document in the channel and returns its file id,
+// Seals a manifest (see manifest.js), stores it as a document in the channel and returns its file id,
 // which is what /s/<id> links carry.
 export async function createManifestLink(env, manifest) {
     const form = new FormData();
     form.append('chat_id', env.TG_Chat_ID);
-    form.append('document', new Blob([JSON.stringify(manifest)], { type: 'application/json' }), 'link.json');
+    form.append('document', new Blob([await sealManifest(env, manifest)], { type: 'application/octet-stream' }), 'link.bin');
     const result = await sendToTelegram(form, 'sendDocument', env);
     if (!result.success) throw failure(result, 'Failed to create link');
     const manifestId = getFileId(result.data);

@@ -1,5 +1,5 @@
 import { authenticateUpload } from './_lib/auth.js';
-import { signManifest, signReceipt } from './_lib/manifest.js';
+import { signReceipt } from './_lib/manifest.js';
 import { checkEncryption, checkExpiry, cleanMeta } from './_lib/options.js';
 import { RateLimitedError, createManifestLink, failure, getFileId, sendToTelegram } from './_lib/send.js';
 
@@ -96,7 +96,7 @@ export async function onRequestPost(context) {
         if (expiresIn || enc) {
             // For encrypted uploads the file is ciphertext; the manifest keeps the
             // original name/type/size so the unlock page can restore them.
-            const manifest = await signManifest(env, {
+            const manifest = {
                 v: 1,
                 fileId,
                 msgId: result.data.result.message_id,
@@ -106,7 +106,7 @@ export async function onRequestPost(context) {
                 ...(expiresIn ? { exp: Date.now() + expiresIn * 1000 } : {}),
                 ...(enc ? { enc: enc.params } : {}),
                 ...(thumbId ? { thumb: thumbId } : {}),
-            });
+            };
             const manifestId = await createManifestLink(env, manifest);
             return new Response(
                 JSON.stringify([{ 'src': enc ? `/s/${manifestId}` : `/s/${manifestId}.${fileExtension}`, 'fallback': result.usedFallback || false, 'expires': manifest.exp }]),

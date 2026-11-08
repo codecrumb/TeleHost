@@ -22,8 +22,8 @@ describe('video link previews', function () {
             }
             sent.push({ kind: url.split('/').pop(), body: init.body });
             const doc = init.body.get('document');
-            if (doc && doc.name === 'link.json') {
-                manifestBody = await doc.text();
+            if (doc && doc.name === 'link.bin') {
+                manifestBody = new Uint8Array(await doc.arrayBuffer());
                 return Response.json({ ok: true, result: { message_id: 6, document: { file_id: manifestId } } });
             }
             return Response.json({ ok: true, result: { message_id: 5, video: { file_id: videoId, thumbnail: { file_id: thumbId } } } });
@@ -96,6 +96,7 @@ describe('video link previews', function () {
     it('keeps the thumbnail out of encrypted uploads', async function () {
         const item = await upload({ encSalt: 'AAAAAAAAAAAAAAAA', encIv: 'BBBBBBBBBBBB', encIter: '600000' });
         assert.strictEqual(item.src, `/s/${manifestId}`);
-        assert.strictEqual(JSON.parse(manifestBody).thumb, undefined);
+        const { openManifest } = await import('../functions/_lib/manifest.js');
+        assert.strictEqual((await openManifest(env, manifestBody)).thumb, undefined);
     });
 });

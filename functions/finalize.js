@@ -1,5 +1,5 @@
 import { authenticateUpload } from './_lib/auth.js';
-import { signManifest, verifyReceipt } from './_lib/manifest.js';
+import { verifyReceipt } from './_lib/manifest.js';
 import { checkEncryption, checkExpiry, cleanMeta } from './_lib/options.js';
 import { RateLimitedError, createManifestLink } from './_lib/send.js';
 import { isValidFileId } from './_lib/telegram.js';
@@ -53,13 +53,13 @@ export async function onRequestPost({ request, env }) {
         }
         if (!expiresIn && !enc) throw new BadRequest('Nothing to finalize: set an expiry or a password');
 
-        const manifest = await signManifest(env, {
+        const manifest = {
             v: 1,
             parts: receipts.map(({ fileId, msgId, size }) => ({ fileId, msgId, size })),
             ...cleanMeta(body),
             ...(expiresIn ? { exp: Date.now() + expiresIn * 1000 } : {}),
             ...(enc ? { enc } : {}),
-        });
+        };
         const manifestId = await createManifestLink(env, manifest);
         return json([{ src: `/s/${manifestId}`, expires: manifest.exp }], 200);
     } catch (error) {

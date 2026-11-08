@@ -24,13 +24,12 @@ describe('/s/:id expiring links', function () {
     });
     afterEach(function () { global.fetch = realFetch; });
 
-    async function setManifest(patch = {}, tamper = {}) {
-        const { signManifest } = await import('../functions/_lib/manifest.js');
-        const signed = await signManifest(env, {
+    async function setManifest(patch = {}, tokenOverride) {
+        const { sealManifest } = await import('../functions/_lib/manifest.js');
+        manifestBody = await sealManifest(tokenOverride ? { ...env, TG_Bot_Token: tokenOverride } : env, {
             v: 1, fileId, msgId: 7, name: 'clip.mp4', type: 'video/mp4', size: 11,
             exp: Date.now() + 60000, ...patch,
         });
-        manifestBody = JSON.stringify({ ...signed, ...tamper });
     }
 
     async function open(id = `${manifestId}.mp4`) {
@@ -55,16 +54,22 @@ describe('/s/:id expiring links', function () {
         assert.deepStrictEqual(JSON.parse(del.init.body), { chat_id: '-100', message_id: 7 });
     });
 
-    it('rejects a manifest whose fields were edited', async function () {
-        await setManifest({}, { msgId: 99, exp: Date.now() + 1e9 });
+    it('rejects a manifest whose bytes were edited', async function () {
+        await setManifest();
+        manifestBody[30] ^= 1;
         const res = await open();
         assert.strictEqual(res.status, 404);
         assert.ok(!calls.some(c => c.url.includes('/deleteMessage')));
     });
 
-    it('rejects an unsigned manifest', async function () {
+    it('rejects a plain (unsealed) manifest, however well formed', async function () {
         manifestBody = JSON.stringify({ v: 1, fileId, msgId: 1, exp: 1 });
         assert.strictEqual((await open()).status, 404);
         assert.ok(!calls.some(c => c.url.includes('/deleteMessage')));
+    });
+
+    it('rejects a manifest sealed with a different bot token', async function () {
+        await setManifest({}, 'OTHER:TOKEN');
+        assert.strictEqual((await open()).status, 404);
     });
 });

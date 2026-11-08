@@ -1,5 +1,5 @@
 import { isCrawler, videoPreviewPage } from '../_lib/preview.js';
-import { verifyManifest } from '../_lib/manifest.js';
+import { openManifest } from '../_lib/manifest.js';
 import { busyResponse, isRefererAllowed, servePage, withFileHeaders } from '../_lib/serve.js';
 import { RateLimitError, deleteMessage, fetchTelegramFile, getFilePath, isValidFileId } from '../_lib/telegram.js';
 
@@ -16,14 +16,10 @@ async function loadManifest(env, manifestId) {
     if (!path) return null;
     const res = await fetchTelegramFile(env, path, new Request('https://manifest.invalid/'));
     if (!res.ok) return null;
-    const raw = await res.text();
-    if (raw.length > MAX_MANIFEST_BYTES) return null;
-    try {
-        const manifest = JSON.parse(raw);
-        return (await verifyManifest(env, manifest)) ? manifest : null;
-    } catch {
-        return null;
-    }
+    // /s/<id> accepts any file id, so don't read a big unrelated file into memory.
+    if (Number(res.headers.get('Content-Length')) > MAX_MANIFEST_BYTES) return null;
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    return bytes.length > MAX_MANIFEST_BYTES ? null : openManifest(env, bytes);
 }
 
 // /s/<manifest_id>.<ext>: serves the file a signed manifest points at, until

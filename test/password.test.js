@@ -33,8 +33,8 @@ describe('password protection', function () {
             }
             const body = init.body;
             const doc = body.get('document');
-            if (doc.name === 'link.json') {
-                stored.manifest = await doc.text();
+            if (doc.name === 'link.bin') {
+                stored.manifest = new Uint8Array(await doc.arrayBuffer());
                 return Response.json({ ok: true, result: { message_id: 6, document: { file_id: manifestId } } });
             }
             stored.cipher = new Uint8Array(await doc.arrayBuffer());
@@ -74,10 +74,12 @@ describe('password protection', function () {
         assert.strictEqual(data[0].src, `/s/${manifestId}`);
         assert.strictEqual(stored.cipherName, 'encrypted.bin');
         assert.ok(!Buffer.from(stored.cipher).includes('top secret'));
-        const manifest = JSON.parse(stored.manifest);
+        const { openManifest } = await import('../functions/_lib/manifest.js');
+        const manifest = await openManifest(env, stored.manifest);
         assert.strictEqual(manifest.name, 'secret.txt');
         assert.strictEqual(manifest.enc.alg, 'AES-GCM');
         assert.strictEqual(manifest.exp, undefined);
+        assert.ok(!Buffer.from(stored.manifest).includes('secret.txt'), 'file name is not readable in the channel');
     });
 
     it('serves the unlock page, meta, and ciphertext; the unlock page can decrypt it', async function () {
@@ -109,11 +111,10 @@ describe('password protection', function () {
 
     it('still honours expiry on password links', async function () {
         await uploadEncrypted({ expiresIn: '60' });
-        const manifest = JSON.parse(stored.manifest);
+        const { openManifest, sealManifest } = await import('../functions/_lib/manifest.js');
+        const manifest = await openManifest(env, stored.manifest);
         assert.ok(manifest.exp > Date.now());
-        manifest.exp = Date.now() - 1;
-        const { signManifest } = await import('../functions/_lib/manifest.js');
-        stored.manifest = JSON.stringify(await signManifest(env, { ...manifest, sig: undefined }));
+        stored.manifest = await sealManifest(env, { ...manifest, exp: Date.now() - 1 });
         assert.strictEqual((await visit('?meta=1')).status, 410);
         assert.strictEqual((await visit('?raw=1')).status, 410);
     });

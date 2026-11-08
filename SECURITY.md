@@ -34,13 +34,17 @@ or sent to clients, and is the HMAC key material for manifests (see below).
   HMAC-signed receipt (file id, message id, size). `/finalize` accepts only
   receipts it can verify, so a client cannot slip arbitrary message ids into a
   manifest, and a receipt can never be mistaken for a manifest signature.
-- **Expiring links cannot be forged.** `/s/` manifests are JSON documents in
-  the channel, and anyone can upload a document through `/upload`, so each
-  manifest is HMAC-SHA256 signed with a key derived from the bot token. An
-  unsigned or edited manifest is rejected, which also stops a crafted manifest
-  from naming an arbitrary message for the server to delete on expiry.
-  Expiry is enforced by the manifest, not by Telegram: the real file id is
-  never shown to visitors.
+- **Manifests are sealed, not just signed.** `/s/` links point at a manifest
+  stored as a document in the channel. Two things can go wrong with that:
+  anyone can upload documents through `/upload`, and `/file/<id>` serves any
+  document, including a manifest whose id is in the link. So a manifest is
+  encrypted and authenticated (AES-GCM, key derived from the bot token). What is
+  stored is unreadable, which keeps the real file ids, message ids and file names
+  secret from link holders (a plain manifest would let them read the real file id
+  and bypass expiry), and any edit or forgery fails authentication, so nobody can
+  craft a manifest that serves another file or deletes an arbitrary message.
+  Expiry is enforced by the manifest, not by Telegram. This leak existed in an
+  earlier unreleased design and was caught by a test before deployment.
 - **Password protection is end-to-end.** The browser encrypts the file
   (AES-GCM, key from PBKDF2-SHA256, 600,000 iterations) before upload; big files
   are encrypted part by part under one key, with a fresh IV per part (random
@@ -69,6 +73,8 @@ or sent to clients, and is the HMAC key material for manifests (see below).
   was still downloadable 387 seconds after `deleteMessage` succeeded. Expiry
   deletes the message as cleanup, but the guarantee comes from the manifest
   check. For the same reason there are no one-time downloads.
+- **Rotating `TG_Bot_Token` breaks existing `/s/` links**, because the manifest
+  key derives from it (plain `/file/` links are unaffected).
 - **Cleanup on expiry is lazy.** The message is deleted when someone opens an
   expired link; a link nobody opens again keeps its file in the channel.
 - **Password files rely on password strength.** Anyone holding the ciphertext

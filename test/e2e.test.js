@@ -33,7 +33,7 @@ describe('big file end to end: encrypt, upload parts, finalize, download, decryp
             if (url.includes('/file/bot')) return new Response(store[url.split('/f/')[1]]);
             if (url.includes('/deleteMessage')) return Response.json({ ok: true });
             const doc = init.body.get('document');
-            const id = doc.name === 'link.json' ? manifestId : `P${++nextId}`.padEnd(30, 'x');
+            const id = doc.name === 'link.bin' ? manifestId : `P${++nextId}`.padEnd(30, 'x');
             store[id] = new Uint8Array(await doc.arrayBuffer());
             return Response.json({ ok: true, result: { message_id: nextMsg++, document: { file_id: id } } });
         };
@@ -135,10 +135,9 @@ describe('big file end to end: encrypt, upload parts, finalize, download, decryp
     it('shows a clear message once the link has expired', async function () {
         const receipts = await uploadParts(['x', 'y']);
         await finalize({ receipts, name: 'a.bin', type: '', size: 2, expiresIn: 60 });
-        const manifest = JSON.parse(Buffer.from(store[manifestId]).toString());
-        manifest.exp = Date.now() - 1;
-        const { signManifest } = await import('../functions/_lib/manifest.js');
-        store[manifestId] = new TextEncoder().encode(JSON.stringify(await signManifest(env, { ...manifest, sig: undefined })));
+        const { openManifest, sealManifest } = await import('../functions/_lib/manifest.js');
+        const manifest = await openManifest(env, store[manifestId]);
+        store[manifestId] = await sealManifest(env, { ...manifest, exp: Date.now() - 1 });
 
         const { doc } = await openViewer();
         await until(() => /expired/.test(text(doc.getElementById('status'))));

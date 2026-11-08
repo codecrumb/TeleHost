@@ -47,7 +47,7 @@ describe('/upload expiry', function () {
         global.fetch = async (url, init) => {
             const kind = String(url).split('/').pop();
             sends.push({ kind, body: init.body });
-            const id = (kind === 'sendDocument' && init.body.get('document').name === 'link.json') ? 'M'.repeat(30) : 'F'.repeat(30);
+            const id = (kind === 'sendDocument' && init.body.get('document').name === 'link.bin') ? 'M'.repeat(30) : 'F'.repeat(30);
             return Response.json({ ok: true, result: { message_id: 5, document: { file_id: id } } });
         };
     });
@@ -68,13 +68,15 @@ describe('/upload expiry', function () {
         assert.strictEqual(sends.length, 1);
     });
 
-    it('returns a signed /s link for expiring uploads', async function () {
+    it('returns a sealed /s link for expiring uploads', async function () {
         const data = await (await upload('3600')).json();
         assert.strictEqual(data[0].src, `/s/${'M'.repeat(30)}.txt`);
-        const manifest = JSON.parse(await sends[1].body.get('document').text());
+        const { openManifest } = await import('../functions/_lib/manifest.js');
+        const bytes = new Uint8Array(await sends[1].body.get('document').arrayBuffer());
+        const manifest = await openManifest(env, bytes);
         assert.strictEqual(manifest.fileId, 'F'.repeat(30));
         assert.strictEqual(manifest.msgId, 5);
-        assert.ok(manifest.sig);
+        assert.ok(!Buffer.from(bytes).includes('F'.repeat(30)), 'sealed, not readable');
     });
 
     it('rejects out-of-range expiry', async function () {

@@ -27,8 +27,8 @@ describe('big files as parts (/finalize and multi-part /s/)', function () {
             sendCount++;
             const doc = init.body.get('document');
             const message_id = nextMsg++;
-            if (doc.name === 'link.json') {
-                store[manifestId] = await doc.text();
+            if (doc.name === 'link.bin') {
+                store[manifestId] = new Uint8Array(await doc.arrayBuffer());
                 return Response.json({ ok: true, result: { message_id, document: { file_id: manifestId } } });
             }
             const id = partId(sendCount);
@@ -77,12 +77,12 @@ describe('big files as parts (/finalize and multi-part /s/)', function () {
         assert.strictEqual(res.status, 200);
         assert.strictEqual(data[0].src, `/s/${manifestId}`);
         assert.strictEqual(sendCount, sendsBefore + 1, 'one manifest document');
-        const manifest = JSON.parse(store[manifestId]);
+        const { openManifest } = await import('../functions/_lib/manifest.js');
+        const manifest = await openManifest(env, store[manifestId]);
         assert.deepStrictEqual(manifest.parts.map(p => p.fileId), receipts.map(r => r.fileId));
         assert.strictEqual(manifest.enc.ivp, 'BBBBBBBBBBB');
         assert.ok(manifest.exp > Date.now());
-        const { verifyManifest } = await import('../functions/_lib/manifest.js');
-        assert.ok(await verifyManifest(env, manifest));
+        assert.ok(!Buffer.from(store[manifestId]).includes(receipts[0].fileId), 'the stored manifest is unreadable');
     });
 
     it('rejects forged, duplicated, oversized or option-less requests without touching Telegram', async function () {
@@ -142,20 +142,17 @@ describe('big files as parts (/finalize and multi-part /s/)', function () {
 
     it('returns 410 after expiry and deletes every part message', async function () {
         const receipts = await publish();
-        const manifest = JSON.parse(store[manifestId]);
-        manifest.exp = Date.now() - 1;
-        const { signManifest } = await import('../functions/_lib/manifest.js');
-        store[manifestId] = JSON.stringify(await signManifest(env, { ...manifest, sig: undefined }));
+        const { openManifest, sealManifest } = await import('../functions/_lib/manifest.js');
+        const manifest = await openManifest(env, store[manifestId]);
+        store[manifestId] = await sealManifest(env, { ...manifest, exp: Date.now() - 1 });
         assert.strictEqual((await visit('?meta=1')).status, 410);
         assert.deepStrictEqual(deleted.sort(), receipts.map(r => r.msgId).sort());
         assert.strictEqual((await visit('?part=0')).status, 410);
     });
 
-    it('rejects a multi-part manifest with an edited part list', async function () {
+    it('rejects a multi-part manifest whose bytes were edited', async function () {
         await publish();
-        const manifest = JSON.parse(store[manifestId]);
-        manifest.parts[0].fileId = partId(99);
-        store[manifestId] = JSON.stringify(manifest);
+        store[manifestId][40] ^= 1;
         assert.strictEqual((await visit('?meta=1')).status, 404);
     });
 });

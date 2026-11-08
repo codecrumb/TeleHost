@@ -62,6 +62,12 @@ or sent to clients, and is the HMAC key material for manifests (see below).
 - **Rate limits are passed on, not absorbed.** If Telegram answers 429 the
   worker returns 429 with `Retry-After` immediately (it never sleeps), and the
   browser waits and retries.
+- **The Android share target asks before uploading.** `/share-target` accepts a
+  file POST, which any website could also send. The service worker only parks
+  the files in a temporary cache and redirects to the upload page; the page shows
+  a "Upload N shared files?" prompt and uploads nothing without a yes, clearing
+  the parked files either way. The worker handles no other request and caches
+  nothing else, so it cannot serve stale or tampered pages.
 - **IP logging is opt-in.** `LOG_UPLOADER_IP=true` adds the uploader's IP
   (from `CF-Connecting-IP` only, never `X-Forwarded-For`) and country to the
   Telegram message. It is off by default. Telling uploaders is up to the

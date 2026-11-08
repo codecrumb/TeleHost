@@ -8,6 +8,8 @@
   <link rel="icon" type="image/png" sizes="32x32" href="/assets/icons/favicon-32.png">
   <link rel="icon" type="image/png" sizes="16x16" href="/assets/icons/favicon-16.png">
   <link rel="apple-touch-icon" sizes="180x180" href="/assets/icons/apple-touch-icon.png">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#0d0d0d">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -1673,6 +1675,51 @@
         }
         var blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
         return new File([blob], folderName + '.zip', { type: 'application/zip' });
+      }
+
+
+      // ── Android share target ───────────────────────────────────────────
+      // The installed app appears in the share sheet; sw.js parks the shared files
+      // in a cache and redirects here with ?shared=<count>. Because any website
+      // could POST files to that address, nothing is uploaded without asking.
+      async function takeSharedFiles() {
+        const flag = new URLSearchParams(location.search).get('shared');
+        if (flag === null) return;
+        history.replaceState(null, '', location.pathname);
+
+        const problem = function (message) {
+          const job = createJob('Shared files', null);
+          setJob(job, { state: 'error', label: message });
+        };
+        if (flag === 'unavailable') return problem('Sharing is ready after the app has been opened once. Please share again.');
+        if (flag === 'error' || !('caches' in window)) return problem('Could not receive the shared files.');
+
+        const files = [];
+        try {
+          const cache = await caches.open('th-shared');
+          for (const request of await cache.keys()) {
+            const response = await cache.match(request);
+            const blob = await response.blob();
+            const name = decodeURIComponent(response.headers.get('X-File-Name') || 'shared-file');
+            files.push(new File([blob], name, { type: blob.type }));
+            await cache.delete(request);
+          }
+        } catch (_) {
+          return problem('Could not receive the shared files.');
+        }
+        if (!files.length) return;
+
+        const listing = files.slice(0, 5).map(function (f) { return '\u2022 ' + f.name; }).join('\n');
+        const more = files.length > 5 ? '\n\u2026and ' + (files.length - 5) + ' more' : '';
+        if (window.confirm('Upload ' + files.length + ' shared file' + (files.length === 1 ? '' : 's') + '?\n\n' + listing + more)) {
+          enqueue(files, takeOptions());
+        }
+      }
+
+      takeSharedFiles();
+
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/sw.js').catch(function () { /* sharing just won't be offered */ });
       }
 
     })();

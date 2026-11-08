@@ -18,7 +18,7 @@ Free file hosting on Cloudflare Pages, using a Telegram channel as storage. No K
 | `ALLOW_HTML_RENDER` | `true` | Off by default. Lets uploaders tick "Open HTML files in the browser", which gives an HTML file a `/v/` link that shows a warning page and then the page itself in a sandbox. Read the security note first: you would be serving other people's web pages from your domain. |
 | `UPLOAD_BASIC_USER` / `UPLOAD_BASIC_PASS` | | Set both to require Basic auth for uploads. |
 | `LOG_UPLOADER_IP` | `true` | Adds the uploader's IP and country to each file's Telegram message. Off by default. |
-| `ALLOWED_UPLOAD_ORIGINS` | `example.com,*.example.org` | Optional. Websites whose pages may upload to this deployment from a visitor's browser. Without it only this site's own page can (curl, scripts and apps always work). Listed sites also get CORS headers so their page can read the returned link. Hostnames only; `*.example.org` covers subdomains. The older name `ALLOWED_REFERERS` still works. Embedding and clicking links are never restricted. |
+| `ALLOWED_UPLOAD_ORIGINS` | `example.com,*.example.org` | Optional. Websites whose pages may upload to this deployment from a visitor's browser. Without it only this site's own page can (curl, scripts and apps always work). Listed sites also get CORS headers so their page can read the returned link. Hostnames only; `*.example.org` covers subdomains. Use `*.example.org` only for subdomains you fully control (it also covers `example.org` itself). https on the default port only, plus `localhost` for development. The old `ALLOWED_REFERERS` and `ALLOW_LINK_CLICKS` variables are no longer used: delete them. Embedding and clicking links are never restricted. |
 
 ## How it works
 

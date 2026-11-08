@@ -32,25 +32,28 @@ describe('who may upload from a web page', function () {
             assert.deepStrictEqual(await gate(listed, { Origin: 'https://good.example' }), { ok: true, origin: 'https://good.example' });
             assert.deepStrictEqual(await gate(listed, { Origin: 'https://a.b.fine.example' }), { ok: true, origin: 'https://a.b.fine.example' });
             assert.deepStrictEqual(await gate(listed, { Origin: 'https://fine.example' }), { ok: true, origin: 'https://fine.example' });
-            assert.deepStrictEqual(await gate(listed, { Origin: 'https://good.example:8443' }), { ok: true, origin: 'https://good.example:8443' });
         });
 
         it('is not fooled by look-alikes, plain http, opaque origins or junk', async function () {
-            for (const origin of ['https://evilgood.example', 'https://good.example.evil.test', 'https://www.good.example',
+            for (const origin of ['https://good.example:8443', 'https://good.example:444', 'https://evilgood.example', 'https://good.example.evil.test', 'https://www.good.example',
                 'http://good.example', 'null', 'not a url', 'https://', 'file://good.example', 'javascript:alert(1)']) {
                 assert.strictEqual((await gate(listed, { Origin: origin })).ok, false, origin);
             }
         });
 
-        it('allows plain http only for localhost, so a local dev page can be listed', async function () {
+        it('allows plain http (any port) only for localhost, so a local dev page can be listed', async function () {
             assert.strictEqual((await gate(listed, { Origin: 'http://localhost:5173' })).ok, true);
+            assert.strictEqual((await gate(listed, { Origin: 'https://localhost:3000' })).ok, true);
             assert.strictEqual((await gate({ ...listed, ALLOWED_UPLOAD_ORIGINS: 'good.example' }, { Origin: 'http://localhost:5173' })).ok, false);
         });
 
-        it('still reads the older ALLOWED_REFERERS name, and the new name wins when both are set', async function () {
-            const old = { ALLOWED_REFERERS: 'good.example' };
-            assert.strictEqual((await gate(old, { Origin: 'https://good.example' })).ok, true);
-            assert.strictEqual((await gate({ ...old, ALLOWED_UPLOAD_ORIGINS: 'other.example' }, { Origin: 'https://good.example' })).ok, false);
+        it('ignores the old ALLOWED_REFERERS list: it must never turn into upload rights', async function () {
+            const old = { ALLOWED_REFERERS: 'good.example,da.gd,tinyurl.com' };
+            for (const origin of ['https://good.example', 'https://da.gd', 'https://tinyurl.com']) {
+                assert.strictEqual((await gate(old, { Origin: origin })).ok, false, origin);
+            }
+            assert.strictEqual((await gate({ ...old, ALLOWED_UPLOAD_ORIGINS: 'good.example' }, { Origin: 'https://good.example' })).ok, true);
+            assert.strictEqual((await gate({ ...old, ALLOWED_UPLOAD_ORIGINS: 'good.example' }, { Origin: 'https://da.gd' })).ok, false);
         });
     });
 

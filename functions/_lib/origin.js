@@ -6,7 +6,10 @@
 //     browser headers at all, and are always welcome,
 //   * a web page on ANOTHER site, running in a visitor's browser: only if that site
 //     is listed in ALLOWED_UPLOAD_ORIGINS (hostnames, e.g. "example.com,*.example.org";
-//     the older name ALLOWED_REFERERS still works). Everything else is refused, so
+//     https on the default port only, apart from localhost for development).
+//     The old ALLOWED_REFERERS variable is deliberately NOT read: it was a list of
+//     sites for a different purpose and must never silently become upload rights.
+//     Everything else is refused, so
 //     a stranger's page cannot use the people visiting it to upload to you, or ride
 //     on their cached Basic-auth credentials.
 //
@@ -15,7 +18,7 @@
 // Embedding and link clicks are deliberately not restricted anywhere.
 
 function allowlist(env) {
-    return String(env.ALLOWED_UPLOAD_ORIGINS ?? env.ALLOWED_REFERERS ?? '')
+    return String(env.ALLOWED_UPLOAD_ORIGINS ?? '')
         .split(',')
         .map(entry => entry.trim().toLowerCase())
         .filter(Boolean);
@@ -53,7 +56,10 @@ export function checkUploadOrigin(request, env) {
         return { ok: false };
     }
     const local = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1';
-    if (parsed.origin === origin && (parsed.protocol === 'https:' || local) && hostListed(env, parsed.hostname.toLowerCase())) {
+    // Another port of a listed host is another application, so only the default
+    // port counts (any port for localhost, which is for development).
+    const trustedAddress = (parsed.protocol === 'https:' && parsed.port === '') || local;
+    if (parsed.origin === origin && trustedAddress && hostListed(env, parsed.hostname.toLowerCase())) {
         return { ok: true, origin };
     }
     return { ok: false };

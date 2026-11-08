@@ -58,10 +58,12 @@ or sent to clients, and is the HMAC key material for manifests (see below).
   constant-time, does not reveal the password length, fails closed if either
   variable is blank or only one is set.
 - **Web pages on other sites cannot upload through their visitors' browsers**
-  unless listed in `ALLOWED_UPLOAD_ORIGINS` (hostnames; the older name
-  `ALLOWED_REFERERS` is still read). `/upload` and `/finalize` accept a request
-  only if it has no browser headers at all (curl, scripts, apps), comes from this
-  site's own page, or has an `Origin` that is https (or localhost) and listed.
+  unless listed in `ALLOWED_UPLOAD_ORIGINS` (hostnames only). The old
+  `ALLOWED_REFERERS` variable is deliberately ignored, so a list that was meant
+  for something else can never turn into upload rights. `/upload` and
+  `/finalize` accept a request only if it has no browser headers at all (curl,
+  scripts, apps), comes from this site's own page, or has an `Origin` that is
+  https on the default port (or localhost, any port) and listed.
   That also stops a stranger's page from riding on cached Basic-auth
   credentials. Listed sites get CORS headers (with credentials allowed, so a
   listed page can reach a password-protected deployment) and preflight answers;
@@ -165,6 +167,10 @@ or sent to clients, and is the HMAC key material for manifests (see below).
   (the default "smart" setting). A link that needs no password never starts a
   download just by being opened, unless the visitor chose "always" in their own
   browser settings.
+- **Listing a site trusts it fully.** A listed origin gets credentialed CORS,
+  so a script injected into it (or into any subdomain, if you list `*.example.org`,
+  which also covers `example.org` itself) can upload as a logged-in operator. List
+  only sites and subdomains you control and keep free of user content.
 - **Embedding and link clicks are not restricted.** Other sites can embed your
   files (each view is a Function request on your daily quota) and anyone can open
   a link from anywhere, including through a URL shortener. There is no Referer

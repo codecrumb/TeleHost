@@ -426,6 +426,65 @@
       font-size: 0.72rem;
       color: #c49a00;
     }
+
+    /* ── History extras ── */
+    .history-actions { display: flex; align-items: center; gap: 6px; }
+    #historyCopyAll {
+      background: none; border: none; color: #666; font: inherit; font-size: 0.75rem;
+      letter-spacing: inherit; text-transform: inherit; cursor: pointer; padding: 2px 6px;
+    }
+    #historyCopyAll:hover { color: #fff; }
+    #historyList { max-height: 420px; overflow-y: auto; }
+    .result-note { font-size: 0.72rem; color: #8a7a3a; }
+    .result-item.fresh { animation: fresh 1.6s ease-out; }
+    @keyframes fresh { from { border-color: #4a9eff; background: #14202f; } }
+    @media (prefers-reduced-motion: reduce) { .result-item.fresh { animation: none; } }
+
+    /* ── Upload tray ── */
+    .tray { position: fixed; right: 20px; bottom: 20px; width: 320px; z-index: 50; }
+    .tray[hidden] { display: none; }
+    .tray-card {
+      position: relative; background: #1a1a1a; border: 1px solid #2a2a2a;
+      border-radius: 12px; box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+    }
+    .tray.stacked .tray-card::before, .tray.stacked .tray-card::after {
+      content: ''; position: absolute; height: 100%; background: #161616;
+      border: 1px solid #2a2a2a; border-radius: 12px; z-index: -1;
+    }
+    .tray.stacked .tray-card::before { left: 8px; right: 8px; bottom: -6px; }
+    .tray.stacked .tray-card::after { left: 16px; right: 16px; bottom: -12px; z-index: -2; background: #131313; }
+    .tray.open .tray-card::before, .tray.open .tray-card::after { display: none; }
+    .tray-head {
+      position: relative; width: 100%; display: flex; align-items: center; gap: 10px;
+      padding: 12px 14px 14px; background: none; border: none; color: #ddd; font: inherit;
+      font-size: 0.85rem; cursor: pointer; text-align: left;
+    }
+    .tray-head:focus-visible, .job button:focus-visible { outline: 2px solid #4a9eff; outline-offset: 2px; }
+    .tray-summary { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tray-pct { color: #888; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .tray-total { position: absolute; left: 14px; right: 14px; bottom: 6px; height: 3px; background: #2a2a2a; border-radius: 2px; overflow: hidden; }
+    #trayFill { display: block; height: 100%; width: 0; background: #4a9eff; transition: width 0.15s; }
+    .tray-list { display: none; max-height: min(50vh, 320px); overflow-y: auto; border-top: 1px solid #2a2a2a; }
+    .tray.open .tray-list { display: block; }
+    @media (hover: hover) and (pointer: fine) { .tray:hover .tray-list { display: block; } .tray:hover .tray-card::before, .tray:hover .tray-card::after { display: none; } }
+    .job { padding: 10px 14px; display: grid; grid-template-columns: 1fr auto auto; gap: 2px 8px; align-items: center; }
+    .job + .job { border-top: 1px solid #222; }
+    .job-name { grid-column: 1; font-size: 0.82rem; color: #ddd; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .job-label { grid-column: 1; font-size: 0.72rem; color: #777; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .job[data-state="error"] .job-label { color: #e05252; white-space: normal; }
+    .job[data-state="done"] .job-label { color: #4ade80; }
+    .job button { background: none; border: none; color: #777; cursor: pointer; font: inherit; font-size: 0.78rem; padding: 2px 6px; }
+    .job button:hover { color: #fff; }
+    .job-x { grid-column: 3; grid-row: 1 / span 2; font-size: 1.1rem !important; }
+    .job-retry { grid-column: 2; grid-row: 1 / span 2; }
+    .job-retry[hidden], .job-x[hidden] { display: none; }
+    .job-bar { grid-column: 1 / -1; height: 3px; background: #2a2a2a; border-radius: 2px; overflow: hidden; margin-top: 6px; }
+    .job-fill { height: 100%; width: 0; background: #4a9eff; transition: width 0.15s; }
+    .job[data-state="done"] .job-fill { background: #4ade80; }
+    .job[data-state="error"] .job-fill { background: #e05252; }
+    @media (max-width: 600px), (hover: none) {
+      .tray { left: 50%; right: auto; transform: translateX(-50%); width: min(92vw, 360px); bottom: 14px; }
+    }
   </style>
 </head>
 <body>
@@ -475,35 +534,32 @@
       </div>
     </div>
 
-    <!-- Uploading state -->
-    <div id="state-uploading">
-      <div class="spinner"></div>
-      <div class="uploading-label" id="uploadingLabel">Uploading…</div>
-    </div>
-
-    <!-- Error state -->
-    <div id="state-error">
-      <svg class="error-icon" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <circle cx="12" cy="12" r="10"></circle>
-        <line x1="12" y1="8" x2="12" y2="12"></line>
-        <line x1="12" y1="16" x2="12.01" y2="16"></line>
-      </svg>
-      <div class="error-msg" id="errorMsg">Upload failed — please try again.</div>
-      <button class="retry-link" id="retryBtn" type="button">Try again</button>
-    </div>
-
   </div>
 
-  <!-- Results -->
-  <div id="results"></div>
+  </div>
 
   <!-- Upload history (persisted in localStorage) -->
   <div id="history">
     <div class="history-header">
       <span>History</span>
-      <button id="historyClear" type="button" aria-label="Clear upload history" title="Clear history">&times;</button>
+      <span class="history-actions">
+        <button id="historyCopyAll" type="button">Copy all</button>
+        <button id="historyClear" type="button" aria-label="Clear upload history" title="Clear history">&times;</button>
+      </span>
     </div>
     <div id="historyList"></div>
+  </div>
+
+  <!-- Uploads in progress: a stack in the corner (centered on phones) -->
+  <div id="tray" class="tray" hidden role="region" aria-label="Uploads">
+    <div class="tray-card">
+      <button id="trayHead" class="tray-head" type="button" aria-expanded="false" aria-controls="trayList">
+        <span id="traySummary" class="tray-summary"></span>
+        <span id="trayPct" class="tray-pct"></span>
+        <span class="tray-total"><span id="trayFill"></span></span>
+      </button>
+      <div id="trayList" class="tray-list"></div>
+    </div>
   </div>
 
   <input type="file" id="fileInput" multiple>
@@ -514,13 +570,6 @@
       const dropzone      = document.getElementById('dropzone');
       const fileInput     = document.getElementById('fileInput');
       const folderInput   = document.getElementById('folderInput');
-      const stateIdle     = document.getElementById('state-idle');
-      const stateUploading= document.getElementById('state-uploading');
-      const stateError    = document.getElementById('state-error');
-      const uploadingLabel= document.getElementById('uploadingLabel');
-      const errorMsg      = document.getElementById('errorMsg');
-      const retryBtn      = document.getElementById('retryBtn');
-      const resultsEl     = document.getElementById('results');
       const historyEl     = document.getElementById('history');
       const historyListEl = document.getElementById('historyList');
       const historyClear  = document.getElementById('historyClear');
@@ -595,6 +644,13 @@
         updateOptionsSummary();
       }
 
+      // Snapshot the options for the files being added, then reset the one-shot ones.
+      function takeOptions() {
+        const options = { mode: currentMode, expiresIn: expirySel.value, password: passwordInput.value };
+        resetOneShotOptions();
+        return options;
+      }
+
       // Restore the remembered quality mode
       try {
         if (localStorage.getItem(MODE_KEY) === 'original') {
@@ -613,35 +669,6 @@
       } else {
         hintEl.classList.add('hidden');
       }
-
-      // ── State helpers ──────────────────────────────────────────────────
-      function showIdle() {
-        stateIdle.style.display      = 'flex';
-        stateUploading.style.display = 'none';
-        stateError.style.display     = 'none';
-        dropzone.style.cursor        = 'pointer';
-      }
-
-      function showUploading(name) {
-        stateIdle.style.display      = 'none';
-        stateUploading.style.display = 'flex';
-        stateError.style.display     = 'none';
-        uploadingLabel.textContent   = 'Uploading ' + name + '…';
-        dropzone.style.cursor        = 'default';
-      }
-
-      function showError(msg) {
-        stateIdle.style.display      = 'none';
-        stateUploading.style.display = 'none';
-        stateError.style.display     = 'flex';
-        errorMsg.textContent         = msg || 'Upload failed — please try again.';
-        dropzone.style.cursor        = 'pointer';
-      }
-
-      retryBtn.addEventListener('click', function (e) {
-        e.stopPropagation();
-        showIdle();
-      });
 
       // ── Drag & drop ────────────────────────────────────────────────────
       document.body.addEventListener('dragenter', function (e) {
@@ -673,18 +700,17 @@
         if (items) {
           const entries = items.map(i => i.webkitGetAsEntry()).filter(Boolean);
           if (entries.some(en => en.isDirectory)) {
-            handleDroppedEntries(entries);
+            handleDroppedEntries(entries, takeOptions());
             return;
           }
         }
         const files = Array.from(e.dataTransfer.files);
-        if (files.length) handleFiles(files);
+        if (files.length) enqueue(files, takeOptions());
       });
 
       // ── Click to upload ────────────────────────────────────────────────
       dropzone.addEventListener('click', function (e) {
         if (e.target.closest('.opts')) return; // the options handle their own clicks
-        if (e.target === retryBtn) return;
         fileInput.click();
       });
 
@@ -698,7 +724,7 @@
 
       fileInput.addEventListener('change', function () {
         const files = Array.from(fileInput.files);
-        if (files.length) handleFiles(files);
+        if (files.length) enqueue(files, takeOptions());
         fileInput.value = '';
       });
 
@@ -719,7 +745,7 @@
           if (!byFolder[topFolder]) byFolder[topFolder] = [];
           byFolder[topFolder].push({ path: file.webkitRelativePath, file });
         }
-        handleFolderGroups(byFolder);
+        handleFolderGroups(byFolder, takeOptions());
       });
 
       // ── Paste ──────────────────────────────────────────────────────────
@@ -729,56 +755,234 @@
         if (!items.length) return;
         e.preventDefault();
         const files = items.map(i => i.getAsFile()).filter(Boolean);
-        if (files.length) handleFiles(files);
+        if (files.length) enqueue(files, takeOptions());
       });
 
-      // ── Upload logic ───────────────────────────────────────────────────
-      async function handleFiles(files) {
-        let lastError = null;
-        let anyFailed = false;
-        for (const file of files) {
-          const result = await uploadFile(file);
-          if (!result.ok) {
-            anyFailed = true;
-            lastError = result.error;
-            if (files.length > 1) {
-              addErrorResult(file.name, result.error);
-              showIdle();
-            }
-          }
-        }
-        // For a single file, preserve the error state in the dropzone
-        if (files.length === 1 && lastError) {
-          showError(lastError);
-        }
-        if (!anyFailed) resetOneShotOptions();
+      // ── Upload tray ────────────────────────────────────────────────────
+      const trayEl      = document.getElementById('tray');
+      const trayHead    = document.getElementById('trayHead');
+      const trayList    = document.getElementById('trayList');
+      const traySummary = document.getElementById('traySummary');
+      const trayPct     = document.getElementById('trayPct');
+      const trayFill    = document.getElementById('trayFill');
+
+      const jobs = [];      // everything shown in the tray
+      const queue = [];     // jobs waiting for their turn
+      let jobSeq = 0;
+      let pumping = false;
+
+      const isActive = function (job) { return job.state === 'queued' || job.state === 'uploading' || job.state === 'prep'; };
+
+      function cancelError() {
+        const err = new Error('Cancelled');
+        err.cancelled = true;
+        return err;
       }
 
-      async function postFile(file, mode, fields) {
-        const fd = new FormData();
-        fd.append('file', file);
-        fd.append('compressionMode', mode);
-        Object.keys(fields || {}).forEach(function (k) {
-          if (fields[k] instanceof Blob) fd.append(k, fields[k], 'thumb.jpg');
-          else fd.append(k, fields[k]);
+      function createJob(name, options) {
+        const job = { id: ++jobSeq, name: name, opts: options || null, file: null, size: 0, state: 'queued',
+                      pct: 0, label: 'Waiting', cancelled: false, abort: null, el: null };
+        const row = document.createElement('div');
+        row.className = 'job';
+        const nameEl = document.createElement('div');
+        nameEl.className = 'job-name';
+        nameEl.textContent = name;
+        nameEl.title = name;
+        const labelEl = document.createElement('div');
+        labelEl.className = 'job-label';
+        const retry = document.createElement('button');
+        retry.type = 'button';
+        retry.className = 'job-retry';
+        retry.textContent = 'Retry';
+        const x = document.createElement('button');
+        x.type = 'button';
+        x.className = 'job-x';
+        x.textContent = '\u00D7';
+        const bar = document.createElement('div');
+        bar.className = 'job-bar';
+        bar.setAttribute('role', 'progressbar');
+        bar.setAttribute('aria-valuemin', '0');
+        bar.setAttribute('aria-valuemax', '100');
+        bar.setAttribute('aria-label', 'Upload progress for ' + name);
+        const fill = document.createElement('div');
+        fill.className = 'job-fill';
+        bar.appendChild(fill);
+        row.append(nameEl, labelEl, retry, x, bar);
+        job.el = { row: row, label: labelEl, fill: fill, bar: bar, retry: retry, x: x };
+
+        x.addEventListener('click', function () { cancelJob(job); });
+        retry.addEventListener('click', function () {
+          job.cancelled = false;
+          setJob(job, { state: 'queued', label: 'Waiting', pct: 0 });
+          queue.push(job);
+          pump();
         });
-        const res = await fetch('/upload', { method: 'POST', body: fd });
-        const data = await res.json();
-        if (!res.ok) {
-          throw new Error((data && data.error) ? data.error : 'Server error (' + res.status + ')');
-        }
-        if (!Array.isArray(data) || !data[0] || !data[0].src) throw new Error('Unexpected server response');
-        return data[0];
+
+        trayList.appendChild(row);
+        jobs.push(job);
+        paintRow(job);
+        updateTray();
+        return job;
       }
 
-      async function postWithRetry(file, mode) {
+      function paintRow(job) {
+        const el = job.el;
+        el.label.textContent = job.label;
+        el.row.dataset.state = job.state;
+        el.fill.style.width = job.pct + '%';
+        el.bar.setAttribute('aria-valuenow', String(job.pct));
+        el.retry.hidden = !(job.state === 'error' && job.file);
+        el.x.hidden = job.state === 'done';
+        const verb = job.state === 'error' ? 'Dismiss ' : 'Cancel ';
+        el.x.setAttribute('aria-label', verb + job.name);
+        el.x.title = verb.trim();
+      }
+
+      function setJob(job, patch) {
+        Object.assign(job, patch);
+        paintRow(job);
+        updateTray();
+      }
+
+      function removeJob(job) {
+        const index = jobs.indexOf(job);
+        if (index < 0) return;
+        jobs.splice(index, 1);
+        job.el.row.remove();
+        updateTray();
+      }
+
+      function cancelJob(job) {
+        if (job.state === 'error') return removeJob(job);
+        job.cancelled = true;
+        if (job.state === 'uploading' && job.abort) job.abort();
+        // Waiting and preparing jobs have nothing in flight; an uploading job is
+        // removed by runJob once the abort lands.
+        if (job.state !== 'uploading') removeJob(job);
+      }
+
+      function updateTray() {
+        trayEl.hidden = jobs.length === 0;
+        trayEl.classList.toggle('stacked', jobs.length > 1);
+        const active = jobs.filter(isActive);
+        const failed = jobs.filter(function (j) { return j.state === 'error'; });
+        const weight = function (j) { return j.size || 1; };
+        const totalWeight = active.reduce(function (sum, j) { return sum + weight(j); }, 0);
+        const pct = totalWeight
+          ? Math.round(active.reduce(function (sum, j) { return sum + j.pct * weight(j); }, 0) / totalWeight)
+          : 100;
+        if (jobs.length === 1) {
+          traySummary.textContent = jobs[0].name;
+          trayPct.textContent = jobs[0].state === 'queued' ? '' : jobs[0].state === 'error' ? 'Failed' : jobs[0].pct + '%';
+        } else if (active.length) {
+          traySummary.textContent = active.length + ' uploads' + (failed.length ? ' · ' + failed.length + ' failed' : '');
+          trayPct.textContent = pct + '%';
+        } else {
+          traySummary.textContent = failed.length ? failed.length + ' failed' : 'Done';
+          trayPct.textContent = '';
+        }
+        trayFill.style.width = pct + '%';
+      }
+
+      // Touch screens have no hover, so the header toggles the list.
+      trayHead.addEventListener('click', function () {
+        const open = trayEl.classList.toggle('open');
+        trayHead.setAttribute('aria-expanded', String(open));
+      });
+
+      window.addEventListener('beforeunload', function (e) {
+        if (jobs.some(isActive)) {
+          e.preventDefault();
+          e.returnValue = '';
+        }
+      });
+
+      // ── Upload queue ───────────────────────────────────────────────────
+      function enqueue(files, options) {
+        files.forEach(function (file) {
+          const job = createJob(file.name, options);
+          job.file = file;
+          job.size = file.size;
+          queue.push(job);
+        });
+        pump();
+      }
+
+      async function pump() {
+        if (pumping) return;
+        pumping = true;
+        while (queue.length) {
+          const job = queue.shift();
+          if (job.cancelled || jobs.indexOf(job) < 0) continue;
+          await runJob(job);
+        }
+        pumping = false;
+      }
+
+      async function runJob(job) {
+        setJob(job, { state: 'uploading', label: 'Starting…' });
+        try {
+          const result = await uploadOne(job);
+          setJob(job, { state: 'done', pct: 100, label: 'Done' });
+          dismissHints();
+          finishLink(result); // shortens in the background
+          setTimeout(function () { removeJob(job); }, 1500);
+        } catch (err) {
+          if (job.cancelled || err.cancelled) return removeJob(job);
+          const message = err instanceof TypeError ? 'Network error — check your connection.' : err.message;
+          setJob(job, { state: 'error', label: message });
+        }
+      }
+
+      function dismissHints() {
+        if (!hintsVisible) return;
+        hintsVisible = false;
+        try { localStorage.setItem(HINT_KEY, '1'); } catch (_) {}
+        hintEl.classList.add('hidden');
+      }
+
+      // XMLHttpRequest rather than fetch: only it reports upload progress.
+      function postFile(file, mode, fields, job, onProgress) {
+        return new Promise(function (resolve, reject) {
+          const fd = new FormData();
+          fd.append('file', file);
+          fd.append('compressionMode', mode);
+          Object.keys(fields || {}).forEach(function (k) {
+            if (fields[k] instanceof Blob) fd.append(k, fields[k], 'thumb.jpg');
+            else fd.append(k, fields[k]);
+          });
+          const xhr = new XMLHttpRequest();
+          xhr.open('POST', '/upload');
+          xhr.upload.onprogress = function (e) {
+            if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
+          };
+          xhr.upload.onload = function () { if (onProgress) onProgress(1); };
+          xhr.onload = function () {
+            let data = null;
+            try { data = JSON.parse(xhr.responseText); } catch (_) {}
+            if (xhr.status < 200 || xhr.status >= 300) {
+              return reject(new Error((data && data.error) ? data.error : 'Server error (' + xhr.status + ')'));
+            }
+            if (!Array.isArray(data) || !data[0] || !data[0].src) return reject(new Error('Unexpected server response'));
+            resolve(data[0]);
+          };
+          xhr.onerror = function () { reject(new TypeError('Network error')); };
+          xhr.onabort = function () { reject(cancelError()); };
+          job.abort = function () { xhr.abort(); };
+          xhr.send(fd);
+        });
+      }
+
+      async function postWithRetry(file, mode, fields, job, onProgress) {
         let lastErr;
         for (let i = 0; i < PART_RETRIES; i++) {
+          if (job.cancelled) throw cancelError();
           try {
-            return await postFile(file, mode);
+            return await postFile(file, mode, fields, job, onProgress);
           } catch (err) {
+            if (err.cancelled) throw err;
             lastErr = err;
-            await new Promise(function (r) { setTimeout(r, 1000 * (i + 1)); });
+            if (i < PART_RETRIES - 1) await new Promise(function (r) { setTimeout(r, 1000 * (i + 1)); });
           }
         }
         throw lastErr;
@@ -821,25 +1025,31 @@
 
       // Split a big file into parts, upload each as a document, then upload a
       // manifest listing them. The manifest's /join link is what the user shares.
-      async function uploadChunked(file) {
+      async function uploadChunked(job) {
+        const file = job.file;
         const total = Math.ceil(file.size / CHUNK_SIZE);
         const pad = String(total).length;
         const resumeKey = resumeKeyFor(file);
         const parts = loadResume(resumeKey, total, file.size);
+        const resumed = parts.length > 0;
+        let sentBytes = parts.reduce(function (sum, p) { return sum + p.size; }, 0);
+        setJob(job, { pct: Math.round(sentBytes / file.size * 100) });
         for (let i = parts.length; i < total; i++) {
-          const resumed = parts.length > 0 ? ' · resumed' : '';
-          showUploading(file.name + ' (part ' + (i + 1) + ' of ' + total + resumed + ')');
+          setJob(job, { label: 'Part ' + (i + 1) + ' of ' + total + (resumed ? ' · resumed' : '') });
           const slice = file.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
           const label = String(i + 1).padStart(pad, '0');
           const partFile = new File([slice], file.name + '.part' + label, { type: 'application/octet-stream' });
-          const item = await postWithRetry(partFile, 'original');
+          const item = await postWithRetry(partFile, 'original', null, job, function (fraction) {
+            setJob(job, { pct: Math.round((sentBytes + fraction * slice.size) / file.size * 100) });
+          });
+          sentBytes += slice.size;
           parts.push({ src: item.src, size: slice.size });
           saveResume(resumeKey, parts);
         }
-        showUploading(file.name + ' (finishing)');
+        setJob(job, { label: 'Finishing…', pct: 100 });
         const manifest = { v: 1, name: file.name, size: file.size, type: file.type || '', parts: parts };
         const manifestFile = new File([JSON.stringify(manifest)], file.name + '.manifest.json', { type: 'application/json' });
-        const item = await postWithRetry(manifestFile, 'original');
+        const item = await postWithRetry(manifestFile, 'original', null, job);
         clearResume(resumeKey);
         return '/join/' + item.src.replace('/file/', '');
       }
@@ -918,79 +1128,55 @@
         });
       }
 
-      async function uploadFile(file) {
-        showUploading(file.name);
+      // Uploads one job and resolves { url, note }.
+      async function uploadOne(job) {
+        const file = job.file;
+        const options = job.opts;
 
-        try {
-          if (file.size > MAX_FILE_SIZE) {
-            return { ok: false, error: 'File is too large (max 1 GB).' };
-          }
-
-          const expiresIn = expirySel.value;
-          const password = passwordInput.value;
-          if ((expiresIn || password) && file.size > CHUNK_SIZE) {
-            return { ok: false, error: 'Expiring and password-protected links support files up to 19 MB for now.' };
-          }
-
-          if (file.size > CHUNK_SIZE) {
-            const joinPath = await uploadChunked(file);
-            addResult(window.location.origin + joinPath, false);
-          } else {
-            let toSend = file;
-            const fields = {};
-            if (expiresIn) fields.expiresIn = expiresIn;
-            if (password) {
-              showUploading('Encrypting ' + file.name);
-              const encrypted = await encryptFile(file, password);
-              toSend = encrypted.file;
-              Object.assign(fields, encrypted.fields);
-              showUploading(file.name);
-            }
-            if (!password && file.type.indexOf('video/') === 0) {
-              const thumbnail = await captureThumbnail(file);
-              if (thumbnail) fields.thumbnail = thumbnail;
-            }
-            const item = await postFile(toSend, currentMode, fields);
-            addResult(window.location.origin + item.src, item.fallback);
-          }
-
-          // Dismiss hints permanently after first successful upload
-          if (hintsVisible) {
-            hintsVisible = false;
-            localStorage.setItem(HINT_KEY, '1');
-            hintEl.classList.add('hidden');
-          }
-          // Note: addResult is async but we don't await it intentionally —
-          // each result item resolves its short URL independently in the background.
-
-          showIdle();
-          return { ok: true };
-        } catch (err) {
-          const isNetwork = err instanceof TypeError;
-          return { ok: false, error: isNetwork ? 'Network error — check your connection.' : err.message };
+        if (file.size > MAX_FILE_SIZE) throw new Error('File is too large (max 1 GB).');
+        if ((options.expiresIn || options.password) && file.size > CHUNK_SIZE) {
+          throw new Error('Expiring and password-protected links support files up to 19 MB for now.');
         }
+
+        if (file.size > CHUNK_SIZE) {
+          return { url: window.location.origin + await uploadChunked(job), note: '' };
+        }
+
+        let toSend = file;
+        const fields = {};
+        if (options.expiresIn) fields.expiresIn = options.expiresIn;
+        if (options.password) {
+          setJob(job, { label: 'Encrypting…' });
+          const encrypted = await encryptFile(file, options.password);
+          toSend = encrypted.file;
+          Object.assign(fields, encrypted.fields);
+        } else if (file.type.indexOf('video/') === 0) {
+          setJob(job, { label: 'Preparing…' });
+          const thumbnail = await captureThumbnail(file);
+          if (thumbnail) fields.thumbnail = thumbnail;
+        }
+        if (job.cancelled) throw cancelError();
+
+        const item = await postWithRetry(toSend, options.mode, fields, job, function (fraction) {
+          const pct = Math.round(fraction * 100);
+          setJob(job, { pct: pct, label: fraction >= 1 ? 'Processing…' : 'Uploading ' + pct + '%' });
+        });
+        return {
+          url: window.location.origin + item.src,
+          note: item.fallback ? 'Stored as original — compressed upload not supported for this file' : '',
+        };
       }
 
-      function addErrorResult(filename, msg) {
-        const item = document.createElement('div');
-        item.className = 'result-item result-item-error';
-
-        const wrap = document.createElement('div');
-        wrap.className = 'result-url-wrap';
-
-        const nameEl = document.createElement('span');
-        nameEl.className = 'result-error-name';
-        nameEl.textContent = filename;
-        nameEl.title = filename;
-
-        const msgEl = document.createElement('span');
-        msgEl.className = 'result-error-msg';
-        msgEl.textContent = msg || 'Upload failed';
-
-        wrap.appendChild(nameEl);
-        wrap.appendChild(msgEl);
-        item.appendChild(wrap);
-        resultsEl.prepend(item);
+      // The link goes into the history right away; the short version replaces it
+      // once a shortener answers (or stays as is if none does).
+      async function finishLink(result) {
+        saveToHistory(result.url, result.note);
+        renderHistory(result.url);
+        const short = await shortenUrl(result.url);
+        if (short !== result.url) {
+          replaceInHistory(result.url, short);
+          renderHistory();
+        }
       }
 
       // ── URL shortener ──────────────────────────────────────────────────
@@ -999,8 +1185,8 @@
 
         const encoded = encodeURIComponent(url);
         const services = [
-          () => fetch('https://da.gd/shorten?url=' + encoded).then(r => r.text()),
-          () => fetch('https://tinyurl.com/api-create.php?url=' + encoded).then(r => r.text()),
+          () => fetch('https://da.gd/shorten?url=' + encoded, { signal: AbortSignal.timeout(4000) }).then(r => r.text()),
+          () => fetch('https://tinyurl.com/api-create.php?url=' + encoded, { signal: AbortSignal.timeout(4000) }).then(r => r.text()),
         ];
 
         for (const call of services) {
@@ -1013,54 +1199,6 @@
         }
 
         return url; // all services failed — fall back to original
-      }
-
-      // ── Result items ───────────────────────────────────────────────────
-      async function addResult(url, fallback) {
-        const item = document.createElement('div');
-        item.className = 'result-item';
-
-        const wrap = document.createElement('div');
-        wrap.className = 'result-url-wrap';
-
-        const link = document.createElement('a');
-        link.className   = 'result-url';
-        link.href        = url;
-        link.target      = '_blank';
-        link.rel         = 'noopener noreferrer';
-        link.textContent = url;
-        link.title       = url;
-
-        const originalLabel = document.createElement('span');
-        originalLabel.className   = 'result-url-original';
-        originalLabel.textContent = url;
-        originalLabel.title       = url;
-
-        wrap.appendChild(link);
-        wrap.appendChild(originalLabel);
-
-        if (fallback) {
-          const notice = document.createElement('span');
-          notice.className = 'result-fallback-notice';
-          notice.textContent = 'Stored as original — compressed upload not supported for this file';
-          wrap.appendChild(notice);
-        }
-
-        // Track which URL the copy button should use (short once resolved)
-        let copyUrl = url;
-        const btn = makeCopyButton(function () { return copyUrl; });
-
-        item.appendChild(wrap);
-        item.appendChild(btn);
-        resultsEl.prepend(item);
-
-        // Resolve short URL and update the item
-        const short = await shortenUrl(url);
-        copyUrl          = short;
-        link.href        = short;
-        link.textContent = short;
-        link.title       = short;
-        saveToHistory(short);
       }
 
       // ── Copy button ────────────────────────────────────────────────────
@@ -1099,7 +1237,7 @@
 
       // ── Upload history (localStorage) ──────────────────────────────────
       const HISTORY_KEY = 'th_history';
-      const HISTORY_MAX = 20;
+      const HISTORY_MAX = 100;
 
       function loadHistory() {
         try {
@@ -1110,22 +1248,34 @@
         }
       }
 
-      function saveToHistory(url) {
-        const list = loadHistory().filter(function (e) { return e.url !== url; });
-        list.unshift({ url: url, ts: Date.now() });
+      function writeHistory(list) {
         try {
           localStorage.setItem(HISTORY_KEY, JSON.stringify(list.slice(0, HISTORY_MAX)));
         } catch (_) { /* storage unavailable — history just won't persist */ }
       }
 
-      function renderHistory() {
+      function saveToHistory(url, note) {
+        const list = loadHistory().filter(function (e) { return e.url !== url; });
+        list.unshift({ url: url, ts: Date.now(), note: note || '' });
+        writeHistory(list);
+      }
+
+      function replaceInHistory(oldUrl, newUrl) {
+        const list = loadHistory();
+        const entry = list.find(function (e) { return e.url === oldUrl; });
+        if (!entry) return;
+        entry.url = newUrl;
+        writeHistory(list.filter(function (e, i) { return e === entry || e.url !== newUrl || i === list.indexOf(entry); }));
+      }
+
+      function renderHistory(freshUrl) {
         const list = loadHistory();
         historyListEl.textContent = '';
         historyEl.classList.toggle('visible', list.length > 0);
 
         list.forEach(function (entry) {
           const item = document.createElement('div');
-          item.className = 'result-item';
+          item.className = 'result-item' + (entry.url === freshUrl ? ' fresh' : '');
 
           const wrap = document.createElement('div');
           wrap.className = 'result-url-wrap';
@@ -1137,13 +1287,41 @@
           link.rel         = 'noopener noreferrer';
           link.textContent = entry.url;
           link.title       = entry.url;
-
           wrap.appendChild(link);
+
+          if (entry.note) {
+            const note = document.createElement('span');
+            note.className   = 'result-note';
+            note.textContent = entry.note;
+            wrap.appendChild(note);
+          }
+
           item.appendChild(wrap);
           item.appendChild(makeCopyButton(function () { return entry.url; }));
           historyListEl.appendChild(item);
         });
       }
+
+      document.getElementById('historyCopyAll').addEventListener('click', function (e) {
+        const btn = e.currentTarget;
+        const text = loadHistory().map(function (entry) { return entry.url; }).join('\n');
+        if (!text) return;
+        const done = function () {
+          btn.textContent = 'Copied!';
+          setTimeout(function () { btn.textContent = 'Copy all'; }, 2000);
+        };
+        navigator.clipboard.writeText(text).then(done).catch(function () {
+          const ta = document.createElement('textarea');
+          ta.value = text;
+          ta.style.position = 'fixed';
+          ta.style.opacity = '0';
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+          done();
+        });
+      });
 
       historyClear.addEventListener('click', function () {
         try { localStorage.removeItem(HISTORY_KEY); } catch (_) {}
@@ -1152,24 +1330,37 @@
 
       renderHistory();
       // ── Folder drop (entry API) ────────────────────────────────────────
-      async function handleDroppedEntries(entries) {
+      // A folder becomes one zip. While it is read and zipped it shows in the tray.
+      function startPrep(name, label) {
+        const job = createJob(name, null);
+        setJob(job, { state: 'prep', label: label });
+        return job;
+      }
+
+      async function handleDroppedEntries(entries, options) {
         const filesToUpload = [];
 
         for (const entry of entries) {
           if (entry.isDirectory) {
-            showUploading('Reading ' + entry.name + '\u2026');
-            const collected = [];
-            await collectEntries(entry, '', collected);
-            if (!collected.length) continue;
-
-            const totalSize = collected.reduce(function (s, e) { return s + e.file.size; }, 0);
-            if (totalSize <= ZIP_SIZE_LIMIT) {
-              showUploading('Zipping ' + entry.name + '\u2026');
-              const zipFile = await makeZip(collected, entry.name);
-              filesToUpload.push(zipFile);
-            } else {
-              // Folder too large to zip — upload files individually
-              filesToUpload.push.apply(filesToUpload, collected.map(function (e) { return e.file; }));
+            const prep = startPrep(entry.name, 'Reading folder…');
+            try {
+              const collected = [];
+              await collectEntries(entry, '', collected);
+              const totalSize = collected.reduce(function (s, e) { return s + e.file.size; }, 0);
+              if (!collected.length || prep.cancelled) {
+                removeJob(prep);
+              } else if (totalSize <= ZIP_SIZE_LIMIT) {
+                setJob(prep, { label: 'Zipping…' });
+                const zipFile = await makeZip(collected, entry.name);
+                removeJob(prep);
+                if (!prep.cancelled) filesToUpload.push(zipFile);
+              } else {
+                // Folder too large to zip — upload files individually
+                removeJob(prep);
+                filesToUpload.push.apply(filesToUpload, collected.map(function (e) { return e.file; }));
+              }
+            } catch (_) {
+              setJob(prep, { state: 'error', label: 'Could not read this folder.' });
             }
           } else {
             // Regular file inside a mixed drop
@@ -1178,28 +1369,31 @@
           }
         }
 
-        if (filesToUpload.length) handleFiles(filesToUpload);
-        else showIdle();
+        if (filesToUpload.length) enqueue(filesToUpload, options);
       }
 
       // Group entries from a webkitdirectory input and zip each folder
-      async function handleFolderGroups(byFolder) {
+      async function handleFolderGroups(byFolder, options) {
         const filesToUpload = [];
 
         for (const folderName of Object.keys(byFolder)) {
           const entries = byFolder[folderName];
           const totalSize = entries.reduce(function (s, e) { return s + e.file.size; }, 0);
           if (totalSize <= ZIP_SIZE_LIMIT) {
-            showUploading('Zipping ' + folderName + '\u2026');
-            const zipFile = await makeZip(entries, folderName);
-            filesToUpload.push(zipFile);
+            const prep = startPrep(folderName, 'Zipping…');
+            try {
+              const zipFile = await makeZip(entries, folderName);
+              removeJob(prep);
+              if (!prep.cancelled) filesToUpload.push(zipFile);
+            } catch (_) {
+              setJob(prep, { state: 'error', label: 'Could not zip this folder.' });
+            }
           } else {
             filesToUpload.push.apply(filesToUpload, entries.map(function (e) { return e.file; }));
           }
         }
 
-        if (filesToUpload.length) handleFiles(filesToUpload);
-        else showIdle();
+        if (filesToUpload.length) enqueue(filesToUpload, options);
       }
 
       // Recursively collect { path, file } from a FileSystemEntry

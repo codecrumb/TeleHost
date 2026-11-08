@@ -22,7 +22,7 @@ describe('resumable chunked uploads', function () {
             sent.push(file.name);
             return { src: `/file/${'X'.repeat(20)}${sent.length}.bin` };
         };
-        const factory = new Function('localStorage', 'File', 'CHUNK_SIZE', 'showUploading', 'postWithRetry',
+        const factory = new Function('localStorage', 'File', 'CHUNK_SIZE', 'setJob', 'postWithRetry',
             `${source}; return { uploadChunked, loadResume };`);
         return factory(localStorage, File, CHUNK, () => {}, postWithRetry);
     }
@@ -37,11 +37,11 @@ describe('resumable chunked uploads', function () {
     it('re-sends only the missing parts after a failure', async function () {
         const page = build();
         failOn = 'big.bin.part3';
-        await assert.rejects(() => page.uploadChunked(makeFile()), /network down/);
+        await assert.rejects(() => page.uploadChunked({ file: makeFile(), cancelled: false }), /network down/);
         assert.deepStrictEqual(sent, ['big.bin.part1', 'big.bin.part2']);
 
         failOn = null;
-        const link = await page.uploadChunked(makeFile());
+        const link = await page.uploadChunked({ file: makeFile(), cancelled: false });
         assert.deepStrictEqual(sent.slice(2), ['big.bin.part3', 'big.bin.part4', 'big.bin.manifest.json']);
         assert.match(link, /^\/join\//);
         assert.deepStrictEqual(Object.keys(store), [], 'resume state is cleared on success');
@@ -50,11 +50,11 @@ describe('resumable chunked uploads', function () {
     it('starts over when the file differs', async function () {
         const page = build();
         failOn = 'big.bin.part3';
-        await assert.rejects(() => page.uploadChunked(makeFile()));
+        await assert.rejects(() => page.uploadChunked({ file: makeFile(), cancelled: false }));
         failOn = null;
         sent = [];
         const other = new File(['b'.repeat(35)], 'big.bin', { lastModified: 1700000000001 });
-        await page.uploadChunked(other);
+        await page.uploadChunked({ file: other, cancelled: false });
         assert.strictEqual(sent[0], 'big.bin.part1');
     });
 

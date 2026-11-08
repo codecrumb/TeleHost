@@ -45,7 +45,7 @@ describe('password protection', function () {
     afterEach(function () { global.fetch = realFetch; });
 
     async function browserEncrypt(plaintext, password) {
-        const src = slice(read('index.html'), 'const PBKDF2_ITER', 'async function uploadFile');
+        const src = slice(read('index.html'), 'const PBKDF2_ITER', '// Grab a frame about');
         const factory = new Function('window', 'crypto', 'File', 'btoa', `${src}; return encryptFile;`);
         const encryptFile = factory({ crypto: globalThis.crypto }, globalThis.crypto, File, btoa);
         return encryptFile(new File([plaintext], 'secret.txt', { type: 'text/plain' }), password);

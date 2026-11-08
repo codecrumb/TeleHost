@@ -36,7 +36,8 @@ describe('upload page', function () {
 
     let fetchLog;
 
-    function makePage(storedSettings) {
+    // config: what /config answers (null = the request fails, as if the server were unreachable)
+    function makePage(storedSettings, config) {
         fetchLog = [];
         dom = new JSDOM(html, {
             url: 'https://host.test/',
@@ -45,7 +46,13 @@ describe('upload page', function () {
             beforeParse(win) {
                 win.XMLHttpRequest = FakeXHR;
                 // shorteners fail -> the full URL is kept
-                win.fetch = (url) => { fetchLog.push(String(url)); return Promise.reject(new Error('offline')); };
+                win.fetch = (url) => {
+                    if (String(url) === '/config') {
+                        return config ? Promise.resolve(Response.json(config)) : Promise.reject(new Error('offline'));
+                    }
+                    fetchLog.push(String(url));
+                    return Promise.reject(new Error('offline'));
+                };
                 Object.defineProperty(win, 'crypto', { value: require('crypto').webcrypto, configurable: true });
                 if (storedSettings) win.localStorage.setItem('th_settings', JSON.stringify(storedSettings));
             },
@@ -270,8 +277,37 @@ describe('upload page', function () {
     });
 
     describe('"Open HTML files in the browser" option', function () {
+        beforeEach(async function () {
+            window.close();
+            makePage(undefined, { htmlRender: true }); // the operator has switched rendering on
+            await tick(30);
+        });
+
         const checkbox = () => document.getElementById('renderHtml');
         const flip = on => { checkbox().checked = on; checkbox().dispatchEvent(new window.Event('change')); };
+
+        it('is hidden unless the server says rendering is on', async function () {
+            const label = () => document.getElementById('renderHtmlLabel');
+            assert.strictEqual(label().hidden, false, 'on');
+            for (const config of [{ htmlRender: false }, {}, { htmlRender: 'true' }, null]) {
+                window.close();
+                makePage(undefined, config);
+                await tick(30);
+                assert.strictEqual(label().hidden, true, JSON.stringify(config));
+            }
+        });
+
+        it('is never sent, even if ticked on an earlier visit, while the server has rendering off', async function () {
+            window.close();
+            makePage(undefined, { htmlRender: false });
+            window.localStorage.setItem('th_render', '1');
+            await tick(30);
+            document.getElementById('renderHtml').checked = true;
+            pick('page.html');
+            await tick();
+            assert.strictEqual(requests[0].body.get('render'), null);
+            assert.doesNotMatch(document.getElementById('optionsSummary').textContent, /HTML/);
+        });
 
         it('sends render=1 for HTML files only, and only when ticked', async function () {
             pick('page.html', 'pic.png');

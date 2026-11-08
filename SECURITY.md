@@ -13,6 +13,7 @@ panel and no third-party telemetry.
 | `GET /file/<id>[~<thumb>].<ext>` | Streams a file from Telegram | Public |
 | `GET /s/<id>[.<ext>]` | Expiring / password-protected links backed by a signed manifest, for files of any size (`?meta`, `?part=N` for big ones) | Public |
 | `GET /join/<id>` | Static page that reassembles plain chunked files in the browser | Public |
+| `GET /config` | Tells the upload page whether HTML rendering is switched on (one yes/no flag, never an environment value) | Public |
 
 The only secret is `TG_Bot_Token`. It is used server-side only, is never logged
 or sent to clients, and is the HMAC key material for manifests (see below).

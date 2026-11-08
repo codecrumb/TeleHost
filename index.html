@@ -192,6 +192,10 @@
       background: #1a1a1a;
     }
 
+    .expiry[hidden] {
+      display: none;
+    }
+
     .options {
       display: flex;
       flex-wrap: wrap;
@@ -563,7 +567,7 @@
               </select>
             </label>
             <input class="pw" id="passwordInput" type="password" placeholder="Password (optional)" autocomplete="new-password" aria-label="Password (optional)">
-          <label class="expiry" title="HTML files get a link that opens them as a web page, behind a warning page, instead of downloading. Only works if this site's operator has enabled it."><input type="checkbox" id="renderHtml"> Open HTML files in the browser</label>
+          <label class="expiry" id="renderHtmlLabel" hidden title="HTML files get a link that opens them as a web page, behind a warning page, instead of downloading. Only works if this site's operator has enabled it."><input type="checkbox" id="renderHtml"> Open HTML files in the browser</label>
           </div>
 
           <p id="hint"></p>
@@ -640,6 +644,7 @@
       };
 
       let currentMode   = 'compressed';
+      let htmlRenderAvailable = false; // set from /config: the operator may have it switched off
       let hintsVisible  = !localStorage.getItem(HINT_KEY);
       let dragCounter   = 0;
 
@@ -674,11 +679,22 @@
         if (currentMode === 'original') bits.push('Original quality');
         if (expirySel.value) bits.push('Expires ' + expirySel.options[expirySel.selectedIndex].text);
         if (passwordInput.value) bits.push('Password');
-        if (renderHtml.checked) bits.push('HTML opens in browser');
+        if (renderWanted()) bits.push('HTML opens in browser');
         optionsSummary.textContent = bits.join(' \u00B7 ');
       }
 
       expirySel.addEventListener('change', updateOptionsSummary);
+
+      // The checkbox only matters when the operator allows rendering, which the
+      // page learns from /config. Until then (or if that fails) it stays hidden and
+      // is never sent, even if it was ticked on an earlier visit.
+      function renderWanted() { return htmlRenderAvailable && renderHtml.checked; }
+
+      if (typeof fetch === 'function') fetch('/config').then(function (res) { return res.ok ? res.json() : null; }).then(function (config) {
+        htmlRenderAvailable = !!(config && config.htmlRender === true);
+        document.getElementById('renderHtmlLabel').hidden = !htmlRenderAvailable;
+        updateOptionsSummary();
+      }).catch(function () { /* keep it hidden */ });
 
       // Remembered between visits, like the quality mode.
       try { renderHtml.checked = localStorage.getItem(RENDER_KEY) === '1'; } catch (_) {}
@@ -697,7 +713,7 @@
 
       // Snapshot the options for the files being added, then reset the one-shot ones.
       function takeOptions() {
-        const options = { mode: currentMode, expiresIn: expirySel.value, password: passwordInput.value, render: renderHtml.checked };
+        const options = { mode: currentMode, expiresIn: expirySel.value, password: passwordInput.value, render: renderWanted() };
         resetOneShotOptions();
         return options;
       }

@@ -127,7 +127,7 @@ export function hotlinkResponse(request) {
     try { from = new URL(request.headers.get('Referer')).hostname; } catch { /* no usable Referer */ }
     return new Response(
         'Hotlinking is not allowed on this deployment.' + (from ? ` (opened from ${from})` : ''),
-        { status: 403, headers: { 'Content-Type': 'text/plain;charset=UTF-8', 'Cache-Control': 'no-store' } }
+        { status: 403, headers: { 'Content-Type': 'text/plain;charset=UTF-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } }
     );
 }
 

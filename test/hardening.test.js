@@ -327,6 +327,7 @@ describe('hotlink protection (ALLOWED_REFERERS)', function () {
         const { hotlinkResponse } = await import('../functions/_lib/serve.js');
         const res = hotlinkResponse(new Request(url, { headers: { Referer: 'https://web.whatsapp.com/some/path?token=secret' } }));
         assert.strictEqual(res.status, 403);
+        assert.strictEqual(res.headers.get('X-Content-Type-Options'), 'nosniff');
         assert.strictEqual(await res.text(), 'Hotlinking is not allowed on this deployment. (opened from web.whatsapp.com)');
         assert.strictEqual((await hotlinkResponse(new Request(url)).text()), 'Hotlinking is not allowed on this deployment.');
     });

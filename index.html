@@ -118,6 +118,55 @@
       color: #ccc;
     }
 
+    /* ── Options (collapsed by default) ── */
+    .opts {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .opts-bar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 0.8rem;
+    }
+
+    .opts-toggle {
+      font-size: 0.8rem;
+      color: #777;
+      text-decoration: none;
+    }
+
+    .opts-toggle:hover,
+    .opts-toggle:focus-visible {
+      color: #ccc;
+    }
+
+    .opts-toggle::after {
+      content: ' \25BE';
+    }
+
+    .opts-toggle[aria-expanded="true"]::after {
+      content: ' \25B4';
+    }
+
+    .opts-summary {
+      color: #4a9eff;
+    }
+
+    .opts-panel {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .opts-panel[hidden] {
+      display: none;
+    }
+
     /* ── Link expiry ── */
     .expiry {
       display: flex;
@@ -397,25 +446,33 @@
         click to browse &nbsp;·&nbsp; <button id="browseFolderBtn" type="button" class="inline-link">select folder</button>
       </div>
 
-      <div class="seg-ctrl" id="segCtrl">
-        <button class="seg active" data-mode="compressed" type="button">Compressed</button>
-        <button class="seg" data-mode="original" type="button">Original</button>
-      </div>
+      <div class="opts" id="opts">
+        <div class="opts-bar">
+          <button id="optionsBtn" type="button" class="inline-link opts-toggle" aria-expanded="false" aria-controls="optionsPanel">Options</button>
+          <span id="optionsSummary" class="opts-summary"></span>
+        </div>
+        <div id="optionsPanel" class="opts-panel" hidden>
+          <div class="seg-ctrl" id="segCtrl">
+            <button class="seg active" data-mode="compressed" type="button">Compressed</button>
+            <button class="seg" data-mode="original" type="button">Original</button>
+          </div>
 
-      <div class="options">
-        <label class="expiry" id="expiry">Link expires
-          <select id="expirySel">
-            <option value="">never</option>
-            <option value="3600">in 1 hour</option>
-            <option value="86400">in 1 day</option>
-            <option value="604800">in 7 days</option>
-            <option value="2592000">in 30 days</option>
-          </select>
-        </label>
-        <input class="pw" id="passwordInput" type="password" placeholder="Password (optional)" autocomplete="new-password" aria-label="Password (optional)">
-      </div>
+          <div class="options">
+            <label class="expiry" id="expiry">Link expires
+              <select id="expirySel">
+                <option value="">never</option>
+                <option value="3600">in 1 hour</option>
+                <option value="86400">in 1 day</option>
+                <option value="604800">in 7 days</option>
+                <option value="2592000">in 30 days</option>
+              </select>
+            </label>
+            <input class="pw" id="passwordInput" type="password" placeholder="Password (optional)" autocomplete="new-password" aria-label="Password (optional)">
+          </div>
 
-      <p id="hint"></p>
+          <p id="hint"></p>
+        </div>
+      </div>
     </div>
 
     <!-- Uploading state -->
@@ -471,6 +528,9 @@
       const segCtrl       = document.getElementById('segCtrl');
       const expirySel     = document.getElementById('expirySel');
       const passwordInput = document.getElementById('passwordInput');
+      const optionsBtn    = document.getElementById('optionsBtn');
+      const optionsPanel  = document.getElementById('optionsPanel');
+      const optionsSummary= document.getElementById('optionsSummary');
 
       // Telegram lets bots upload 50 MB but download only 20 MB, so bigger files
       // are split into parts this size and tied together by a small manifest file.
@@ -481,6 +541,7 @@
       const ZIP_SIZE_LIMIT = 45 * 1024 * 1024; // 45 MB — Telegram bot API limit is 50 MB
 
       const HINT_KEY  = 'th_hinted';
+      const MODE_KEY  = 'th_mode';
       const HINTS = {
         compressed: 'Smaller file, slightly lower quality',
         original:   'Full quality, larger file',
@@ -503,8 +564,48 @@
         segCtrl.querySelectorAll('.seg').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         currentMode = btn.dataset.mode;
+        try { localStorage.setItem(MODE_KEY, currentMode); } catch (_) {}
         updateHint();
+        updateOptionsSummary();
       });
+
+      // ── Options panel ──────────────────────────────────────────────────
+      optionsBtn.addEventListener('click', function () {
+        const open = optionsPanel.hidden;
+        optionsPanel.hidden = !open;
+        optionsBtn.setAttribute('aria-expanded', String(open));
+      });
+
+      // One line next to the toggle so a non-default choice is never hidden.
+      function updateOptionsSummary() {
+        const bits = [];
+        if (currentMode === 'original') bits.push('Original quality');
+        if (expirySel.value) bits.push('Expires ' + expirySel.options[expirySel.selectedIndex].text);
+        if (passwordInput.value) bits.push('Password');
+        optionsSummary.textContent = bits.join(' \u00B7 ');
+      }
+
+      expirySel.addEventListener('change', updateOptionsSummary);
+      passwordInput.addEventListener('input', updateOptionsSummary);
+
+      // Expiry and password apply to one batch of uploads, never silently to the next.
+      function resetOneShotOptions() {
+        expirySel.value = '';
+        passwordInput.value = '';
+        updateOptionsSummary();
+      }
+
+      // Restore the remembered quality mode
+      try {
+        if (localStorage.getItem(MODE_KEY) === 'original') {
+          currentMode = 'original';
+          segCtrl.querySelectorAll('.seg').forEach(function (b) {
+            b.classList.toggle('active', b.dataset.mode === 'original');
+          });
+          updateHint();
+          updateOptionsSummary();
+        }
+      } catch (_) {}
 
       // Init hints
       if (hintsVisible) {
@@ -582,7 +683,7 @@
 
       // ── Click to upload ────────────────────────────────────────────────
       dropzone.addEventListener('click', function (e) {
-        if (e.target.closest('.seg-ctrl, .options')) return; // let the controls handle their own clicks
+        if (e.target.closest('.opts')) return; // the options handle their own clicks
         if (e.target === retryBtn) return;
         fileInput.click();
       });
@@ -634,9 +735,11 @@
       // ── Upload logic ───────────────────────────────────────────────────
       async function handleFiles(files) {
         let lastError = null;
+        let anyFailed = false;
         for (const file of files) {
           const result = await uploadFile(file);
           if (!result.ok) {
+            anyFailed = true;
             lastError = result.error;
             if (files.length > 1) {
               addErrorResult(file.name, result.error);
@@ -648,6 +751,7 @@
         if (files.length === 1 && lastError) {
           showError(lastError);
         }
+        if (!anyFailed) resetOneShotOptions();
       }
 
       async function postFile(file, mode, fields) {

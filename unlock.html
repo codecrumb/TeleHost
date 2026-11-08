@@ -39,6 +39,10 @@
     .btn:hover { background: #e8e8e8; }
     .btn:disabled { opacity: 0.6; cursor: default; }
     .preview { max-width: 100%; max-height: 360px; border-radius: 10px; }
+    .progress { width: 100%; display: flex; flex-direction: column; gap: 8px; }
+    .bar { height: 8px; background: #2a2a2a; border-radius: 4px; overflow: hidden; }
+    #fill { height: 100%; width: 0; background: #4a9eff; border-radius: 4px; transition: width 0.15s; }
+    .progress-text { display: flex; justify-content: space-between; color: #777; font-size: 0.8rem; }
     .hidden { display: none !important; }
     @media (max-width: 480px) { body { padding-top: 32px; } .card { padding: 32px 20px; } }
   </style>
@@ -51,6 +55,10 @@
       <div class="meta" id="meta"></div>
     </div>
     <div class="status" id="status" role="status">Loading…</div>
+    <div id="progress" class="progress hidden">
+      <div class="bar"><div id="fill"></div></div>
+      <div class="progress-text"><span id="pLeft"></span><span id="pRight"></span></div>
+    </div>
     <form id="form" class="hidden">
       <input type="password" id="password" placeholder="Password" autocomplete="off" required aria-label="Password">
       <button class="btn" id="unlock" type="submit">Unlock</button>
@@ -68,7 +76,9 @@
       var pw = document.getElementById('password'), unlockBtn = document.getElementById('unlock');
       var resultEl = document.getElementById('result'), previewBox = document.getElementById('previewBox');
       var downloadBtn = document.getElementById('download');
-      var info = null, cipher = null, plain = null;
+      var progressEl = document.getElementById('progress'), fillEl = document.getElementById('fill');
+      var pLeft = document.getElementById('pLeft'), pRight = document.getElementById('pRight');
+      var info = null, cipher = null, plain = null, firstPart = null;
 
       function setStatus(msg, isError) {
         statusEl.textContent = msg;
@@ -96,18 +106,23 @@
         if (!res.ok) throw new Error('This link is invalid or the file is gone.');
         return res.json();
       }).then(function (data) {
-        if (!data || !data.enc) throw new Error('This file is not password protected.');
+        if (!data || (!data.enc && !Array.isArray(data.parts))) throw new Error('This link needs no unlock page.');
         info = data;
         var name = String(data.name || 'download').replace(/[\\/:*?"<>|\r\n]/g, '_');
         info.name = name;
         nameEl.textContent = name;
         document.title = name + ' – TeleHost';
-        metaEl.textContent = data.size ? fmt(data.size) : '';
-        setStatus('Enter the password to unlock this file.');
-        form.classList.remove('hidden');
-        pw.focus();
+        metaEl.textContent = (data.size ? fmt(data.size) : '') + (data.parts ? ' · ' + data.parts.length + ' parts' : '');
+        if (data.enc) {
+          setStatus('Enter the password to unlock this file.');
+          form.classList.remove('hidden');
+          pw.focus();
+        } else {
+          downloadParts(null).catch(function (e) { setStatus(e.message || 'Download failed.', true); });
+        }
       }).catch(function (e) { setStatus(e.message, true); });
 
+      // A file stored as one piece: the whole ciphertext, one IV.
       async function decrypt(password) {
         if (!cipher) {
           var res = await fetch('/s/' + id + '?raw=1');
@@ -115,12 +130,25 @@
           if (!res.ok) throw new Error('Could not download the file.');
           cipher = await res.arrayBuffer();
         }
+        return decryptBuffer(await deriveKey(password), unb64(info.enc.iv), cipher);
+      }
+
+      var keyCache = { password: null, key: null };
+
+      // PBKDF2 is slow on purpose, so derive once per password, not once per part.
+      async function deriveKey(password) {
+        if (keyCache.password === password) return keyCache.key;
         var base = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveKey']);
         var key = await crypto.subtle.deriveKey(
           { name: 'PBKDF2', salt: unb64(info.enc.salt), iterations: info.enc.iter, hash: 'SHA-256' },
           base, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+        keyCache = { password: password, key: key };
+        return key;
+      }
+
+      async function decryptBuffer(key, iv, buffer) {
         try {
-          return await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(info.enc.iv) }, key, cipher);
+          return await crypto.subtle.decrypt({ name: 'AES-GCM', iv: iv }, key, buffer);
         } catch (_) {
           var wrong = new Error('Wrong password.');
           wrong.wrongPassword = true;
@@ -128,22 +156,122 @@
         }
       }
 
+      // Parts: the IV is an 8-byte prefix plus the part number, as the uploader built it.
+      function partIv(index) {
+        var iv = new Uint8Array(12);
+        iv.set(unb64(info.enc.ivp));
+        new DataView(iv.buffer).setUint32(8, index);
+        return iv;
+      }
+
+      async function decryptPart(password, buffer, index) {
+        return decryptBuffer(await deriveKey(password), partIv(index), buffer);
+      }
+
       form.addEventListener('submit', async function (e) {
         e.preventDefault();
         unlockBtn.disabled = true;
         setStatus('Decrypting…');
         try {
-          plain = await decrypt(pw.value);
-          form.classList.add('hidden');
-          setStatus('Unlocked.');
-          showResult();
+          if (info.parts) {
+            await checkPassword(pw.value);
+            form.classList.add('hidden');
+            await downloadParts(pw.value);
+          } else {
+            plain = await decrypt(pw.value);
+            form.classList.add('hidden');
+            setStatus('Unlocked.');
+            showResult();
+          }
         } catch (err) {
+          form.classList.remove('hidden');
+          progressEl.classList.add('hidden');
           setStatus(err.message || 'Something went wrong.', true);
-          if (err.wrongPassword) { pw.select(); }
+          if (err.wrongPassword) pw.select();
         } finally {
           unlockBtn.disabled = false;
         }
       });
+
+      // Try the first part before downloading the rest: a wrong password then
+      // fails in seconds instead of after the whole file.
+      async function checkPassword(password) {
+        if (!firstPart) firstPart = await fetchPart(0, function () {});
+        await decryptPart(password, await firstPart.arrayBuffer(), 0);
+      }
+
+      async function downloadParts(password) {
+        var sizes = info.parts, loaded = 0, chunks = [];
+        var total = sizes.reduce(function (a, b) { return a + b; }, 0) || 1;
+        progressEl.classList.remove('hidden');
+        function paint() {
+          var pct = Math.max(0, Math.min(100, Math.round(loaded / total * 100)));
+          fillEl.style.width = pct + '%';
+          pLeft.textContent = fmt(Math.max(0, loaded)) + ' of ' + fmt(total);
+          pRight.textContent = pct + '%';
+        }
+        paint();
+        for (var i = 0; i < sizes.length; i++) {
+          setStatus('Downloading part ' + (i + 1) + ' of ' + sizes.length + '…');
+          var blob;
+          if (i === 0 && firstPart) {
+            blob = firstPart;
+            loaded += blob.size;
+            paint();
+          } else {
+            blob = await fetchPart(i, function (n) { loaded += n; paint(); });
+          }
+          chunks.push(password === null ? blob : new Blob([await decryptPart(password, await blob.arrayBuffer(), i)]));
+        }
+        plain = new Blob(chunks);
+        setStatus('Done.');
+        showResult();
+      }
+
+      async function waitSeconds(n, prefix) {
+        for (var left = n; left > 0; left--) {
+          setStatus(prefix + left + 's…');
+          await new Promise(function (r) { setTimeout(r, 1000); });
+        }
+      }
+
+      async function readBlob(res, onBytes) {
+        if (!res.body || !res.body.getReader) {
+          var b = await res.blob();
+          onBytes(b.size);
+          return b;
+        }
+        var reader = res.body.getReader(), chunks = [];
+        for (;;) {
+          var r = await reader.read();
+          if (r.done) break;
+          chunks.push(r.value);
+          onBytes(r.value.length);
+        }
+        return new Blob(chunks);
+      }
+
+      // One part, with retries; Telegram rate limits (429) are waited out.
+      async function fetchPart(index, onBytes) {
+        var failures = 0, busy = 0;
+        for (;;) {
+          var got = 0;
+          try {
+            var res = await fetch('/s/' + id + '?part=' + index);
+            if (res.status === 410) { var gone = new Error('This link has expired.'); gone.fatal = true; throw gone; }
+            if (res.status === 429 && busy++ < 10) {
+              await waitSeconds(Math.min(Number(res.headers.get('Retry-After')) || 5, 60), 'Telegram is busy — retrying in ');
+              continue;
+            }
+            if (!res.ok) throw new Error('Could not download part ' + (index + 1) + ' (HTTP ' + res.status + ').');
+            return await readBlob(res, function (n) { got += n; onBytes(n); });
+          } catch (e) {
+            onBytes(-got); // roll back this attempt's progress
+            if (e.fatal || ++failures >= 4) throw e;
+            await new Promise(function (r) { setTimeout(r, 800 * failures); });
+          }
+        }
+      }
 
       function showResult() {
         resultEl.classList.remove('hidden');

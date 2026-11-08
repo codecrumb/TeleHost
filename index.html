@@ -1111,20 +1111,41 @@
         return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
       }
 
-      async function encryptFile(file, password) {
+      async function deriveAesKey(password, salt, usages) {
         if (!(window.crypto && crypto.subtle)) throw new Error('Password protection needs a secure (https) connection.');
+        const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveKey']);
+        return crypto.subtle.deriveKey(
+          { name: 'PBKDF2', salt: salt, iterations: PBKDF2_ITER, hash: 'SHA-256' },
+          base, { name: 'AES-GCM', length: 256 }, false, usages);
+      }
+
+      async function encryptFile(file, password) {
         const salt = crypto.getRandomValues(new Uint8Array(16));
         const iv = crypto.getRandomValues(new Uint8Array(12));
-        const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveKey']);
-        const key = await crypto.subtle.deriveKey(
-          { name: 'PBKDF2', salt: salt, iterations: PBKDF2_ITER, hash: 'SHA-256' },
-          base, { name: 'AES-GCM', length: 256 }, false, ['encrypt']);
+        const key = await deriveAesKey(password, salt, ['encrypt']);
         const cipher = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv }, key, await file.arrayBuffer());
         return {
           file: new File([cipher], 'encrypted.bin', { type: 'application/octet-stream' }),
           fields: {
             encSalt: toBase64Url(salt), encIv: toBase64Url(iv), encIter: PBKDF2_ITER,
             encName: file.name, encType: file.type || '', encSize: file.size,
+          },
+        };
+      }
+
+      // For big files: one key for the whole file, one IV per part (an 8-byte random
+      // prefix plus the part number), so no IV is ever reused under the same key.
+      async function makePartEncryptor(password) {
+        const salt = crypto.getRandomValues(new Uint8Array(16));
+        const ivPrefix = crypto.getRandomValues(new Uint8Array(8));
+        const key = await deriveAesKey(password, salt, ['encrypt']);
+        return {
+          params: { salt: toBase64Url(salt), ivp: toBase64Url(ivPrefix), iter: PBKDF2_ITER },
+          encrypt: function (buffer, index) {
+            const iv = new Uint8Array(12);
+            iv.set(ivPrefix);
+            new DataView(iv.buffer).setUint32(8, index);
+            return crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv }, key, buffer);
           },
         };
       }
@@ -1175,18 +1196,82 @@
         });
       }
 
+      // A big file with an expiry and/or a password: parts go up as usual (each
+      // answered with a signed receipt, encrypted first if there is a password), then
+      // /finalize turns the receipts into one signed /s/ link. No resume yet: the
+      // parts are only usable together with the key parameters chosen here.
+      async function uploadChunkedSecure(job) {
+        const file = job.file;
+        const options = job.opts;
+        const total = Math.ceil(file.size / CHUNK_SIZE);
+        const pad = String(total).length;
+        let encryptor = null;
+        if (options.password) {
+          setJob(job, { label: 'Encrypting…' });
+          encryptor = await makePartEncryptor(options.password);
+        }
+        const receipts = [];
+        let sentBytes = 0;
+        for (let i = 0; i < total; i++) {
+          setJob(job, { label: 'Part ' + (i + 1) + ' of ' + total });
+          const slice = file.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+          const label = String(i + 1).padStart(pad, '0');
+          // Encrypted parts carry no file name into the channel.
+          const body = encryptor ? new Blob([await encryptor.encrypt(await slice.arrayBuffer(), i)]) : slice;
+          const partFile = new File([body], encryptor ? 'part' + label + '.bin' : file.name + '.part' + label,
+                                    { type: 'application/octet-stream' });
+          const item = await postWithRetry(partFile, 'original', { part: '1' }, job, function (fraction) {
+            setJob(job, { pct: Math.round((sentBytes + fraction * slice.size) / file.size * 100) });
+          });
+          if (!item.receipt) throw new Error('Unexpected server response');
+          receipts.push(item.receipt);
+          sentBytes += slice.size;
+        }
+        setJob(job, { label: 'Finishing…', pct: 100 });
+        const payload = { receipts: receipts, name: file.name, type: file.type || '', size: file.size };
+        if (options.expiresIn) payload.expiresIn = options.expiresIn;
+        if (encryptor) payload.enc = encryptor.params;
+        return (await finalizeParts(job, payload)).src;
+      }
+
+      async function finalizeParts(job, payload) {
+        let failures = 0, busyWaits = 0;
+        for (;;) {
+          if (job.cancelled) throw cancelError();
+          let res;
+          try {
+            res = await fetch('/finalize', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload),
+            });
+          } catch (err) {
+            if (++failures >= PART_RETRIES) throw err;
+            await new Promise(function (r) { setTimeout(r, 1000 * failures); });
+            continue;
+          }
+          if (res.status === 429 && busyWaits++ < 10) {
+            await waitWhileBusy(job, Math.min(Number(res.headers.get('Retry-After')) || 5, 60));
+            continue;
+          }
+          const data = await res.json().catch(function () { return null; });
+          if (!res.ok) throw new Error((data && data.error) ? data.error : 'Server error (' + res.status + ')');
+          if (!Array.isArray(data) || !data[0] || !data[0].src) throw new Error('Unexpected server response');
+          return data[0];
+        }
+      }
+
       // Uploads one job and resolves { url, note }.
       async function uploadOne(job) {
         const file = job.file;
         const options = job.opts;
 
         if (file.size > MAX_FILE_SIZE) throw new Error('File is too large (max 1 GB).');
-        if ((options.expiresIn || options.password) && file.size > CHUNK_SIZE) {
-          throw new Error('Expiring and password-protected links support files up to 19 MB for now.');
-        }
 
         if (file.size > CHUNK_SIZE) {
-          return { url: window.location.origin + await uploadChunked(job), note: '' };
+          const secure = options.expiresIn || options.password;
+          const link = secure ? await uploadChunkedSecure(job) : await uploadChunked(job);
+          return { url: window.location.origin + link, note: '' };
         }
 
         let toSend = file;

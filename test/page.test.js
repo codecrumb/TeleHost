@@ -5,6 +5,11 @@ const { JSDOM } = require('jsdom');
 
 const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
 const tick = (ms = 5) => new Promise(r => setTimeout(r, ms));
+const until = async (fn, ms = 10000) => {
+    const end = Date.now() + ms;
+    while (Date.now() < end) { if (fn()) return; await tick(10); }
+    throw new Error('timed out waiting for: ' + fn);
+};
 
 describe('upload page', function () {
     let dom, window, document, requests;
@@ -35,6 +40,7 @@ describe('upload page', function () {
             beforeParse(win) {
                 win.XMLHttpRequest = FakeXHR;
                 win.fetch = () => Promise.reject(new Error('offline')); // shorteners fail -> full URL is kept
+                Object.defineProperty(win, 'crypto', { value: require('crypto').webcrypto, configurable: true });
             },
         });
         window = dom.window;
@@ -179,6 +185,47 @@ describe('upload page', function () {
         assert.strictEqual(rows()[0].querySelector('.job-pct').textContent, '43%');
         assert.strictEqual(document.querySelectorAll('.tray .job-bar, .tray .tray-total').length, 2, 'the header bar exists in the DOM but is hidden by CSS for a single upload');
     });
+
+    it('uploads a big file as encrypted parts, finalizes them, and links /s/ in the history', async function () {
+        const finalizeCalls = [];
+        window.fetch = async (url, init) => {
+            finalizeCalls.push({ url: String(url), body: JSON.parse(init.body) });
+            return new window.Response(JSON.stringify([{ src: '/s/ABCDEFGHIJKLMNOPQRSTUVWXYZ' }]), { status: 200 });
+        };
+        window.Response = window.Response || Response;
+        const sel = document.getElementById('expirySel');
+        sel.value = '3600';
+        sel.dispatchEvent(new window.Event('change'));
+        const pw = document.getElementById('passwordInput');
+        pw.value = 'hunter2';
+        pw.dispatchEvent(new window.Event('input'));
+
+        const big = new window.File([new Uint8Array(19 * 1024 * 1024 + 10)], 'movie.bin', { type: 'application/octet-stream' });
+        const input = document.getElementById('fileInput');
+        Object.defineProperty(input, 'files', { value: [big], configurable: true });
+        input.dispatchEvent(new window.Event('change'));
+
+        const receipt = n => ({ fileId: `P${n}`.padEnd(30, 'x'), msgId: n, size: 1, sig: 's' });
+        for (let n = 1; n <= 2; n++) {
+            await until(() => requests.length >= n);
+            const body = requests[n - 1].body;
+            assert.strictEqual(body.get('part'), '1');
+            assert.strictEqual(body.get('file').name, `part${n}.bin`, 'encrypted parts do not carry the file name');
+            assert.strictEqual(body.get('encSalt'), null);
+            requests[n - 1].respond(200, [{ src: `/file/P${n}.bin`, receipt: receipt(n) }]);
+        }
+        await until(() => finalizeCalls.length === 1);
+        assert.strictEqual(finalizeCalls[0].url, '/finalize');
+        const sent = finalizeCalls[0].body;
+        assert.deepStrictEqual(sent.receipts.map(r => r.msgId), [1, 2]);
+        assert.strictEqual(sent.expiresIn, '3600');
+        assert.strictEqual(sent.name, 'movie.bin');
+        assert.ok(sent.enc.salt && sent.enc.ivp && sent.enc.iter === 600000);
+        assert.strictEqual(sent.enc.iv, undefined);
+
+        await until(() => history().length === 1);
+        assert.strictEqual(history()[0].url, 'https://host.test/s/ABCDEFGHIJKLMNOPQRSTUVWXYZ');
+    }).timeout(15000);
 
     it('toggles the tray list on tap for touch screens', async function () {
         pick('a.png');

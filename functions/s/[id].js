@@ -3,7 +3,8 @@ import { verifyManifest } from '../_lib/manifest.js';
 import { busyResponse, isRefererAllowed, servePage, withFileHeaders } from '../_lib/serve.js';
 import { RateLimitError, deleteMessage, fetchTelegramFile, getFilePath, isValidFileId } from '../_lib/telegram.js';
 
-const MAX_MANIFEST_BYTES = 8 * 1024;
+const MAX_MANIFEST_BYTES = 16 * 1024; // 64 parts of ~140 bytes plus metadata
+const MAX_DELETES_PER_VISIT = 40; // each delete is a subrequest; Workers allow 50 on the free plan
 
 const text = (body, status) => new Response(body, {
     status,
@@ -48,16 +49,52 @@ async function serve({ request, env, params }) {
     if (!isValidFileId(manifestId)) return text('Not found', 404);
 
     const manifest = await loadManifest(env, manifestId);
-    if (!manifest || !isValidFileId(manifest.fileId)) return text('Not found', 404);
+    const isMultiPart = !!manifest && Array.isArray(manifest.parts);
+    if (!manifest || (!isMultiPart && !isValidFileId(manifest.fileId))) return text('Not found', 404);
+    const query = new URL(request.url).searchParams;
 
     if (typeof manifest.exp === 'number' && Date.now() >= manifest.exp) {
-        if (manifest.msgId) await deleteMessage(env, manifest.msgId);
+        const messageIds = [manifest.msgId, ...(isMultiPart ? manifest.parts.map(p => p && p.msgId) : [])]
+            .filter(Number.isInteger)
+            .slice(0, MAX_DELETES_PER_VISIT);
+        await Promise.all(messageIds.map(id => deleteMessage(env, id)));
         return text('This link has expired.', 410);
+    }
+
+    // A big file stored as parts: the unlock page downloads them one by one
+    // (?part=N), so a request never needs more than a few subrequests.
+    if (isMultiPart) {
+        if (!manifest.parts.length || !manifest.parts.every(p => p && isValidFileId(p.fileId))) {
+            return text('Not found', 404);
+        }
+        if (query.has('meta')) {
+            return Response.json(
+                { name: manifest.name, type: manifest.type, size: manifest.size, enc: manifest.enc || null, parts: manifest.parts.map(p => p.size) },
+                { headers: { 'Cache-Control': 'no-store' } }
+            );
+        }
+        if (!query.has('part')) return servePage(env, request, 'unlock');
+
+        const index = /^\d{1,3}$/.test(query.get('part')) ? Number(query.get('part')) : -1;
+        const part = manifest.parts[index];
+        if (!part) return text('Not found', 404);
+        const partPath = await getFilePath(env, part.fileId);
+        if (!partPath) return text('Not found', 404);
+        const upstreamPart = await fetchTelegramFile(env, partPath, request);
+        if (upstreamPart.status === 429) return busyResponse(upstreamPart.headers.get('Retry-After'));
+        if (!upstreamPart.ok && upstreamPart.status !== 206) return text('Upstream error', 502);
+        return new Response(upstreamPart.body, {
+            status: upstreamPart.status,
+            headers: {
+                'Content-Type': 'application/octet-stream',
+                'X-Content-Type-Options': 'nosniff',
+                'Cache-Control': 'private, no-cache',
+            },
+        });
     }
 
     // Password-protected: the browser decrypts. ?meta=1 returns what the unlock
     // page needs, ?raw=1 the ciphertext, anything else the unlock page itself.
-    const query = new URL(request.url).searchParams;
     if (manifest.enc && !query.has('raw')) {
         if (!query.has('meta')) return servePage(env, request, 'unlock');
         return Response.json(

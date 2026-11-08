@@ -98,7 +98,7 @@ describe('password protection', function () {
         const unb64 = slice(html, 'function unb64', 'var id =');
         const decryptSrc = slice(html, 'async function decrypt', 'form.addEventListener');
         const factory = new Function('crypto', 'atob', 'TextEncoder', 'fetch', 'id',
-            `var info, cipher; ${unb64}; ${decryptSrc}; return { set: function (i, c) { info = i; cipher = c; }, decrypt: decrypt };`);
+            `var info, cipher; ${unb64}; ${decryptSrc}; return { set: function (i, c) { info = i; cipher = c; }, decrypt: decrypt, decryptPart: decryptPart };`);
         const page2 = factory(globalThis.crypto, atob, TextEncoder, null, manifestId);
         page2.set(meta, cipher);
 

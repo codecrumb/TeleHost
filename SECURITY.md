@@ -9,9 +9,10 @@ panel and no third-party telemetry.
 | Route | Purpose | Access |
 |---|---|---|
 | `POST /upload` | Sends a file (or a chunk) to the Telegram channel | Public, or HTTP Basic if `UPLOAD_BASIC_USER` / `UPLOAD_BASIC_PASS` are set |
+| `POST /finalize` | Turns uploaded chunks into one signed `/s/` link (expiry / password) | Same as `/upload` |
 | `GET /file/<id>[~<thumb>].<ext>` | Streams a file from Telegram | Public (optional referer allowlist) |
-| `GET /s/<id>[.<ext>]` | Expiring / password-protected links backed by a signed manifest | Public (optional referer allowlist) |
-| `GET /join/<id>` | Static page that reassembles chunked files in the browser | Public |
+| `GET /s/<id>[.<ext>]` | Expiring / password-protected links backed by a signed manifest, for files of any size (`?meta`, `?part=N` for big ones) | Public (optional referer allowlist) |
+| `GET /join/<id>` | Static page that reassembles plain chunked files in the browser | Public |
 
 The only secret is `TG_Bot_Token`. It is used server-side only, is never logged
 or sent to clients, and is the HMAC key material for manifests (see below).
@@ -29,6 +30,10 @@ or sent to clients, and is the HMAC key material for manifests (see below).
   responses carry `X-Content-Type-Options: nosniff`, and inline non-PDF
   responses carry `Content-Security-Policy: sandbox`. (Chrome cannot show PDFs
   under a sandbox policy, so PDFs are the one exception.)
+- **Big files are bound to receipts.** Each uploaded chunk comes back with an
+  HMAC-signed receipt (file id, message id, size). `/finalize` accepts only
+  receipts it can verify, so a client cannot slip arbitrary message ids into a
+  manifest, and a receipt can never be mistaken for a manifest signature.
 - **Expiring links cannot be forged.** `/s/` manifests are JSON documents in
   the channel, and anyone can upload a document through `/upload`, so each
   manifest is HMAC-SHA256 signed with a key derived from the bot token. An
@@ -37,7 +42,9 @@ or sent to clients, and is the HMAC key material for manifests (see below).
   Expiry is enforced by the manifest, not by Telegram: the real file id is
   never shown to visitors.
 - **Password protection is end-to-end.** The browser encrypts the file
-  (AES-GCM, key from PBKDF2-SHA256, 600,000 iterations) before upload. Telegram
+  (AES-GCM, key from PBKDF2-SHA256, 600,000 iterations) before upload; big files
+  are encrypted part by part under one key, with a fresh IV per part (random
+  prefix plus part number) and no file name in the channel. Telegram
   and the worker only see ciphertext and public parameters; the password never
   leaves the browser. The server accepts only sane parameters (iterations
   between 100,000 and 1,000,000, bounded-length salt/IV). The unlock page only
@@ -66,8 +73,13 @@ or sent to clients, and is the HMAC key material for manifests (see below).
   expired link; a link nobody opens again keeps its file in the channel.
 - **Password files rely on password strength.** Anyone holding the ciphertext
   can try passwords offline. A lost password cannot be recovered.
-- **Chunked files (over 19 MiB)** cannot use expiry or a password yet, and their
-  part links are ordinary public `/file/` links.
+- **Plain chunked files (over 19 MiB, no expiry or password)** keep their part
+  links as ordinary public `/file/` links; only files given an expiry or a
+  password use the protected `/s/` path, where part ids are never exposed.
+- **Big files with an expiry or password cannot resume** an interrupted upload,
+  and expiry cleanup deletes at most 40 messages per visit (a Workers
+  subrequest limit), so a very large expired file may need a second visit to be
+  fully cleaned up. The link itself stops working at once.
 - **Referer allowlisting is best-effort.** Empty referers always pass, and a
   referer can be forged outside a browser.
 - **No Content-Security-Policy on the app's own pages** (`index.html`,

@@ -1,18 +1,7 @@
-import { signManifest } from './_lib/manifest.js';
-
-// Thrown when Telegram rate limits an upload; becomes a 429 the browser retries.
-class RateLimitedError extends Error {
-    constructor(retryAfter) {
-        super('Telegram is rate limiting uploads');
-        this.retryAfter = retryAfter;
-    }
-}
-
-function failure(result, fallbackMessage) {
-    return result.retryAfter ? new RateLimitedError(result.retryAfter) : new Error(result.error || fallbackMessage);
-}
-
-const MAX_EXPIRY_SECONDS = 30 * 24 * 60 * 60;
+import { authenticateUpload } from './_lib/auth.js';
+import { signManifest, signReceipt } from './_lib/manifest.js';
+import { checkEncryption, checkExpiry, cleanMeta } from './_lib/options.js';
+import { RateLimitedError, createManifestLink, failure, getFileId, sendToTelegram } from './_lib/send.js';
 
 export async function onRequestPost(context) {
     const { request, env } = context;
@@ -39,7 +28,7 @@ export async function onRequestPost(context) {
             throw new Error('File exceeds the 50 MB Telegram upload limit');
         }
 
-        const expiresIn = parseExpiry(formData.get('expiresIn'));
+        const expiresIn = checkExpiry(formData.get('expiresIn'));
         const enc = parseEncryption(formData);
 
         const fileName = uploadFile.name;
@@ -91,6 +80,15 @@ export async function onRequestPost(context) {
             throw new Error('Failed to get file ID');
         }
 
+        // A chunk of a bigger file: hand back a signed receipt, which /finalize needs.
+        if (formData.get('part')) {
+            const receipt = await signReceipt(env, { fileId, msgId: result.data.result.message_id, size: uploadFile.size });
+            return new Response(
+                JSON.stringify([{ 'src': `/file/${fileId}.${fileExtension}`, 'receipt': receipt }]),
+                { status: 200, headers: { 'Content-Type': 'application/json' } }
+            );
+        }
+
         // Videos carry their thumbnail's file id so link previews can show it.
         // Never for encrypted uploads, whose content must stay opaque.
         const thumbId = enc ? null : getThumbId(result.data);
@@ -109,13 +107,7 @@ export async function onRequestPost(context) {
                 ...(enc ? { enc: enc.params } : {}),
                 ...(thumbId ? { thumb: thumbId } : {}),
             });
-            const manifestForm = new FormData();
-            manifestForm.append('chat_id', env.TG_Chat_ID);
-            manifestForm.append('document', new Blob([JSON.stringify(manifest)], { type: 'application/json' }), 'link.json');
-            const manifestResult = await sendToTelegram(manifestForm, 'sendDocument', env);
-            if (!manifestResult.success) throw failure(manifestResult, 'Failed to create link');
-            const manifestId = getFileId(manifestResult.data);
-            if (!manifestId) throw new Error('Failed to create link');
+            const manifestId = await createManifestLink(env, manifest);
             return new Response(
                 JSON.stringify([{ 'src': enc ? `/s/${manifestId}` : `/s/${manifestId}.${fileExtension}`, 'fallback': result.usedFallback || false, 'expires': manifest.exp }]),
                 { status: 200, headers: { 'Content-Type': 'application/json' } }
@@ -157,33 +149,16 @@ function uploaderCaption(request, env) {
     return country ? `Uploader: ${ip} (${country})` : `Uploader: ${ip}`;
 }
 
-// Seconds until the link expires; null when the upload has no expiry.
-function parseExpiry(value) {
-    if (value === null || value === undefined || value === '') return null;
-    const seconds = Number(value);
-    if (!Number.isInteger(seconds) || seconds < 60 || seconds > MAX_EXPIRY_SECONDS) {
-        throw new Error('Invalid expiry');
-    }
-    return seconds;
-}
-
-// The browser encrypts password-protected files (AES-GCM, PBKDF2 key) before
-// upload; the server only records the public parameters needed to decrypt.
+// Form fields -> validated encryption info, or null for a normal upload.
 function parseEncryption(formData) {
-    const salt = formData.get('encSalt');
-    if (!salt) return null;
-    const iv = formData.get('encIv');
-    const iter = Number(formData.get('encIter'));
-    const b64url = /^[A-Za-z0-9_-]{8,64}$/;
-    if (!b64url.test(salt) || !b64url.test(iv || '') ||
-        !Number.isInteger(iter) || iter < 100000 || iter > 1000000) {
-        throw new Error('Invalid encryption parameters');
-    }
+    if (!formData.get('encSalt')) return null;
     return {
-        params: { alg: 'AES-GCM', kdf: 'PBKDF2-SHA256', salt, iv, iter },
-        name: String(formData.get('encName') || 'download').slice(0, 255),
-        type: String(formData.get('encType') || '').slice(0, 100),
-        size: Math.max(0, Number(formData.get('encSize')) || 0),
+        params: checkEncryption({
+            salt: formData.get('encSalt'),
+            iv: formData.get('encIv'),
+            iter: formData.get('encIter'),
+        }, 'single'),
+        ...cleanMeta({ name: formData.get('encName'), type: formData.get('encType'), size: formData.get('encSize') }),
     };
 }
 
@@ -191,112 +166,4 @@ function getThumbId(response) {
     const video = response.ok && response.result && response.result.video;
     const thumb = video && (video.thumbnail || video.thumb);
     return thumb && thumb.file_id ? thumb.file_id : null;
-}
-
-function getFileId(response) {
-    if (!response.ok || !response.result) return null;
-
-    const result = response.result;
-    if (result.photo) {
-        return result.photo.reduce((prev, current) =>
-            (prev.file_size > current.file_size) ? prev : current
-        ).file_id;
-    }
-    if (result.document) return result.document.file_id;
-    if (result.video) return result.video.file_id;
-    if (result.audio) return result.audio.file_id;
-
-    return null;
-}
-
-async function sendToTelegram(formData, apiEndpoint, env, retryCount = 0) {
-    const MAX_RETRIES = 2;
-    const apiUrl = `https://api.telegram.org/bot${env.TG_Bot_Token}/${apiEndpoint}`;
-
-    try {
-        const response = await fetch(apiUrl, { method: "POST", body: formData });
-        const responseData = await response.json();
-
-        if (response.ok) {
-            return { success: true, data: responseData };
-        }
-
-        // 图片上传失败时转为文档方式重试
-        const rateLimited = responseData.error_code === 429;
-        if (!rateLimited && retryCount < MAX_RETRIES && apiEndpoint === 'sendPhoto') {
-            console.log('Retrying image as document...');
-            const newFormData = new FormData();
-            newFormData.append('chat_id', formData.get('chat_id'));
-            if (formData.get('caption')) newFormData.append('caption', formData.get('caption'));
-            newFormData.append('document', formData.get('photo'));
-            const fallbackResult = await sendToTelegram(newFormData, 'sendDocument', env, retryCount + 1);
-            if (fallbackResult.success) fallbackResult.usedFallback = true;
-            return fallbackResult;
-        }
-
-        return {
-            success: false,
-            error: responseData.description || 'Upload to Telegram failed',
-            retryAfter: rateLimited ? Math.ceil((responseData.parameters && responseData.parameters.retry_after) || 5) : null,
-        };
-    } catch (error) {
-        console.error('Network error:', error);
-        if (retryCount < MAX_RETRIES) {
-            await new Promise(resolve => setTimeout(resolve, 1000 * (retryCount + 1)));
-            return await sendToTelegram(formData, apiEndpoint, env, retryCount + 1);
-        }
-        return { success: false, error: 'Network error occurred' };
-    }
-}
-// Optional Basic Auth for uploads. Uploads stay public unless both
-// UPLOAD_BASIC_USER and UPLOAD_BASIC_PASS are set.
-function authenticateUpload(request, env) {
-    const hasUser = !!env.UPLOAD_BASIC_USER;
-    const hasPass = !!env.UPLOAD_BASIC_PASS;
-    if (!hasUser && !hasPass) return null;
-
-    const json = (body, status, extra = {}) => new Response(JSON.stringify(body), {
-        status,
-        headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...extra },
-    });
-
-    if (!hasUser || !hasPass) {
-        return json({ error: 'UPLOAD_BASIC_USER and UPLOAD_BASIC_PASS must both be set' }, 500);
-    }
-
-    const challenge = { 'WWW-Authenticate': 'Basic realm="upload", charset="UTF-8"' };
-    const [scheme, encoded] = (request.headers.get('Authorization') || '').split(' ');
-    if (!encoded || scheme !== 'Basic') {
-        return json({ error: 'You need to login.' }, 401, challenge);
-    }
-
-    let decoded;
-    try {
-        decoded = new TextDecoder().decode(Uint8Array.from(atob(encoded), c => c.charCodeAt(0))).normalize();
-    } catch (e) {
-        return json({ error: 'Malformed authorization header.' }, 400);
-    }
-    const index = decoded.indexOf(':');
-    if (index === -1 || /[\0-\x1F\x7F]/.test(decoded)) {
-        return json({ error: 'Malformed authorization header.' }, 400);
-    }
-
-    const userOk = timingSafeEqual(env.UPLOAD_BASIC_USER, decoded.substring(0, index));
-    const passOk = timingSafeEqual(env.UPLOAD_BASIC_PASS, decoded.substring(index + 1));
-    if (!userOk || !passOk) {
-        return json({ error: 'Invalid upload credentials.' }, 401, challenge);
-    }
-    return null;
-}
-
-// Constant-time string comparison to mitigate timing attacks.
-function timingSafeEqual(a, b) {
-    const aStr = String(a);
-    const bStr = String(b);
-    if (aStr.length !== bStr.length) return false;
-    let result = 0;
-    for (let i = 0; i < aStr.length; i++) {
-        result |= aStr.charCodeAt(i) ^ bStr.charCodeAt(i);
-    }
-    return result === 0;
 }

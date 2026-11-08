@@ -42,3 +42,28 @@ export async function verifyManifest(env, manifest) {
     }
     return diff === 0;
 }
+
+// A receipt proves the server itself stored a part: /upload signs {fileId, msgId,
+// size} for each chunk, and /finalize only accepts parts it can verify. That keeps
+// clients from naming arbitrary messages for the server to delete on expiry.
+// The prefix keeps receipt signatures distinct from manifest signatures.
+const RECEIPT_FIELDS = ({ fileId, msgId, size }) => ({ fileId, msgId, size });
+
+export async function signReceipt(env, part) {
+    const fields = RECEIPT_FIELDS(part);
+    return { ...fields, sig: await hmac(env, 'receipt:' + canonical(fields)) };
+}
+
+export async function verifyReceipt(env, receipt) {
+    if (!receipt || typeof receipt !== 'object' || typeof receipt.sig !== 'string' ||
+        typeof receipt.fileId !== 'string' || !Number.isInteger(receipt.msgId) || !Number.isInteger(receipt.size)) {
+        return false;
+    }
+    const expected = await hmac(env, 'receipt:' + canonical(RECEIPT_FIELDS(receipt)));
+    if (expected.length !== receipt.sig.length) return false;
+    let diff = 0;
+    for (let i = 0; i < expected.length; i++) {
+        diff |= expected.charCodeAt(i) ^ receipt.sig.charCodeAt(i);
+    }
+    return diff === 0;
+}

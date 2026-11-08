@@ -22,6 +22,7 @@ Free file hosting on Cloudflare Pages, using a Telegram channel as storage. No K
 
 - `/upload` sends the file to the Telegram channel and returns `/file/<file_id>.<ext>`.
 - `/file/<file_id>.<ext>` streams it back from Telegram. Nothing is stored on the server.
+- Pick "Link expires" before uploading to get a `/s/<id>.<ext>` link instead. A small signed manifest stored in the channel holds the real file id and the expiry; after it passes, the link returns 410 and the file's message is deleted. Limited to files up to 19 MiB for now.
 - Files over 19 MiB are split into chunks and reassembled by the `/join/<id>` page.
 
 ## Limits

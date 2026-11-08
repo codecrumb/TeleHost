@@ -35,3 +35,18 @@ export function fetchTelegramFile(env, filePath, request) {
         headers,
     });
 }
+
+// Best effort: Telegram may keep serving already-downloaded copies for a while.
+export async function deleteMessage(env, messageId) {
+    try {
+        const res = await fetch(`https://api.telegram.org/bot${env.TG_Bot_Token}/deleteMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: env.TG_Chat_ID, message_id: messageId }),
+        });
+        return res.ok;
+    } catch (error) {
+        console.error('deleteMessage error:', error.message);
+        return false;
+    }
+}

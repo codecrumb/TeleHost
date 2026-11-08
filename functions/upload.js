@@ -1,3 +1,7 @@
+import { signManifest } from './_lib/manifest.js';
+
+const MAX_EXPIRY_SECONDS = 30 * 24 * 60 * 60;
+
 export async function onRequestPost(context) {
     const { request, env } = context;
 
@@ -22,6 +26,8 @@ export async function onRequestPost(context) {
         if (uploadFile.size > 50 * 1024 * 1024) {
             throw new Error('File exceeds the 50 MB Telegram upload limit');
         }
+
+        const expiresIn = parseExpiry(formData.get('expiresIn'));
 
         const fileName = uploadFile.name;
         const fileExtension = fileName.split('.').pop().toLowerCase();
@@ -66,6 +72,28 @@ export async function onRequestPost(context) {
             throw new Error('Failed to get file ID');
         }
 
+        if (expiresIn) {
+            const manifest = await signManifest(env, {
+                v: 1,
+                fileId,
+                msgId: result.data.result.message_id,
+                name: fileName,
+                type: uploadFile.type || '',
+                size: uploadFile.size,
+                exp: Date.now() + expiresIn * 1000,
+            });
+            const manifestForm = new FormData();
+            manifestForm.append('chat_id', env.TG_Chat_ID);
+            manifestForm.append('document', new Blob([JSON.stringify(manifest)], { type: 'application/json' }), 'link.json');
+            const manifestResult = await sendToTelegram(manifestForm, 'sendDocument', env);
+            const manifestId = manifestResult.success && getFileId(manifestResult.data);
+            if (!manifestId) throw new Error('Failed to create expiring link');
+            return new Response(
+                JSON.stringify([{ 'src': `/s/${manifestId}.${fileExtension}`, 'fallback': result.usedFallback || false, 'expires': manifest.exp }]),
+                { status: 200, headers: { 'Content-Type': 'application/json' } }
+            );
+        }
+
         return new Response(
             JSON.stringify([{ 'src': `/file/${fileId}.${fileExtension}`, 'fallback': result.usedFallback || false }]),
             {
@@ -93,6 +121,16 @@ function uploaderCaption(request, env) {
     if (!ip) return null;
     const country = request.cf && request.cf.country;
     return country ? `Uploader: ${ip} (${country})` : `Uploader: ${ip}`;
+}
+
+// Seconds until the link expires; null when the upload has no expiry.
+function parseExpiry(value) {
+    if (value === null || value === undefined || value === '') return null;
+    const seconds = Number(value);
+    if (!Number.isInteger(seconds) || seconds < 60 || seconds > MAX_EXPIRY_SECONDS) {
+        throw new Error('Invalid expiry');
+    }
+    return seconds;
 }
 
 function getFileId(response) {

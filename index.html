@@ -680,24 +680,63 @@
         throw lastErr;
       }
 
+      // Parts that already reached Telegram are remembered in localStorage, keyed
+      // by file identity, so re-selecting the same file after a failure resumes
+      // instead of starting over. The server keeps no state for this.
+      const RESUME_PREFIX = 'th_resume:';
+      const RESUME_TTL = 7 * 24 * 60 * 60 * 1000;
+
+      function resumeKeyFor(file) {
+        return RESUME_PREFIX + [file.name, file.size, file.lastModified, CHUNK_SIZE].join(':');
+      }
+
+      function loadResume(key, total, fileSize) {
+        try {
+          const saved = JSON.parse(localStorage.getItem(key) || 'null');
+          if (!saved || Date.now() - saved.ts > RESUME_TTL || !Array.isArray(saved.parts)) return [];
+          const parts = [];
+          for (let i = 0; i < saved.parts.length && i < total; i++) {
+            const p = saved.parts[i];
+            const expected = Math.min(CHUNK_SIZE, fileSize - i * CHUNK_SIZE);
+            if (!p || p.size !== expected || !/^\/file\/[A-Za-z0-9_.\-]+$/.test(p.src)) break;
+            parts.push({ src: p.src, size: p.size });
+          }
+          return parts;
+        } catch (_) {
+          return [];
+        }
+      }
+
+      function saveResume(key, parts) {
+        try { localStorage.setItem(key, JSON.stringify({ ts: Date.now(), parts: parts })); } catch (_) { /* no resume without storage */ }
+      }
+
+      function clearResume(key) {
+        try { localStorage.removeItem(key); } catch (_) {}
+      }
+
       // Split a big file into parts, upload each as a document, then upload a
       // manifest listing them. The manifest's /join link is what the user shares.
       async function uploadChunked(file) {
         const total = Math.ceil(file.size / CHUNK_SIZE);
         const pad = String(total).length;
-        const parts = [];
-        for (let i = 0; i < total; i++) {
-          showUploading(file.name + ' (part ' + (i + 1) + ' of ' + total + ')');
+        const resumeKey = resumeKeyFor(file);
+        const parts = loadResume(resumeKey, total, file.size);
+        for (let i = parts.length; i < total; i++) {
+          const resumed = parts.length > 0 ? ' · resumed' : '';
+          showUploading(file.name + ' (part ' + (i + 1) + ' of ' + total + resumed + ')');
           const slice = file.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
           const label = String(i + 1).padStart(pad, '0');
           const partFile = new File([slice], file.name + '.part' + label, { type: 'application/octet-stream' });
           const item = await postWithRetry(partFile, 'original');
           parts.push({ src: item.src, size: slice.size });
+          saveResume(resumeKey, parts);
         }
         showUploading(file.name + ' (finishing)');
         const manifest = { v: 1, name: file.name, size: file.size, type: file.type || '', parts: parts };
         const manifestFile = new File([JSON.stringify(manifest)], file.name + '.manifest.json', { type: 'application/json' });
         const item = await postWithRetry(manifestFile, 'original');
+        clearResume(resumeKey);
         return '/join/' + item.src.replace('/file/', '');
       }
 

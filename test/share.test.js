@@ -8,7 +8,9 @@ describe('/s/:id expiring links', function () {
     let calls;
     let manifestBody;
 
+    const realRandom = Math.random;
     beforeEach(function () {
+        Math.random = () => 0; // cleanup sampling without an edge cache: always run
         calls = [];
         global.fetch = async (url, init = {}) => {
             url = String(url);
@@ -22,7 +24,7 @@ describe('/s/:id expiring links', function () {
             return new Response('video-bytes', { status: 200, headers: { 'Content-Type': 'application/octet-stream' } });
         };
     });
-    afterEach(function () { global.fetch = realFetch; });
+    afterEach(function () { global.fetch = realFetch; Math.random = realRandom; });
 
     async function setManifest(patch = {}, tokenOverride) {
         const { sealManifest } = await import('../functions/_lib/manifest.js');

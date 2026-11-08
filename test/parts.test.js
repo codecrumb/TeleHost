@@ -10,7 +10,9 @@ describe('big files as parts (/finalize and multi-part /s/)', function () {
     let deleted;
     let nextMsg;
 
+    const realRandom = Math.random;
     beforeEach(function () {
+        Math.random = () => 0; // cleanup sampling without an edge cache: always run
         store = {};
         sendCount = 0;
         deleted = [];
@@ -36,7 +38,7 @@ describe('big files as parts (/finalize and multi-part /s/)', function () {
             return Response.json({ ok: true, result: { message_id, document: { file_id: id } } });
         };
     });
-    afterEach(function () { global.fetch = realFetch; });
+    afterEach(function () { global.fetch = realFetch; Math.random = realRandom; });
 
     async function uploadPart(text, extraEnv = {}, headers = {}) {
         const { onRequestPost } = await import('../functions/upload.js');

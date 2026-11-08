@@ -117,10 +117,37 @@ describe('review fixes', function () {
             assert.strictEqual(deleted.length, afterFirst, 'no further Telegram calls within the hour');
         });
 
-        it('without an edge cache it still bounds the work per request', async function () {
-            await expiredLink(64);
-            assert.strictEqual((await visit()).status, 410);
-            assert.ok(deleted.length > 0 && deleted.length <= 5, `deleted ${deleted.length}`);
+        it('without an edge cache it bounds the work per request, and only some requests clean up', async function () {
+            const realRandom = Math.random;
+            try {
+                await expiredLink(64);
+                Math.random = () => 0;
+                assert.strictEqual((await visit()).status, 410);
+                assert.ok(deleted.length > 0 && deleted.length <= 5, `deleted ${deleted.length}`);
+
+                deleted.length = 0;
+                Math.random = () => 0.9;
+                for (let i = 0; i < 20; i++) assert.strictEqual((await visit()).status, 410);
+                assert.strictEqual(deleted.length, 0, 'unsampled requests make no Telegram calls');
+            } finally {
+                Math.random = realRandom;
+            }
+        });
+
+        it('does not trust an edge cache that silently drops what it is given', async function () {
+            const realRandom = Math.random;
+            try {
+                global.caches = { default: { match: async () => undefined, put: async () => {} } };
+                await expiredLink(64);
+                Math.random = () => 0.9;
+                for (let i = 0; i < 20; i++) assert.strictEqual((await visit()).status, 410);
+                assert.strictEqual(deleted.length, 0, 'treated as having no memory, so it samples instead of deleting 40 every time');
+                Math.random = () => 0;
+                await visit();
+                assert.ok(deleted.length > 0 && deleted.length <= 5);
+            } finally {
+                Math.random = realRandom;
+            }
         });
 
         it('a different slice is cleaned in a later hour, so big files are covered over time', async function () {
@@ -225,3 +252,36 @@ describe('page headers', function () {
         assert.match(html, /s\.crossOrigin = 'anonymous'/);
     });
 });
+
+describe('link secret is checked before anything is stored', function () {
+    const realFetch = global.fetch;
+    afterEach(function () { global.fetch = realFetch; });
+
+    async function upload(fields, env) {
+        const calls = [];
+        global.fetch = async (url) => { calls.push(String(url)); return Response.json({ ok: true, result: { message_id: 1, document: { file_id: 'F'.repeat(30) } } }); };
+        const { onRequestPost } = await import('../functions/upload.js');
+        const body = new FormData();
+        body.append('file', new File(['x'], 'a.bin', { type: 'application/octet-stream' }));
+        for (const [k, v] of Object.entries(fields)) body.append(k, v);
+        const res = await onRequestPost({ request: new Request('https://x.test/upload', { method: 'POST', body }), env });
+        return { res, calls };
+    }
+
+    it('a bad LINK_SECRET stops expiring, password and part uploads before they reach Telegram', async function () {
+        const env = { TG_Bot_Token: 'T:T', TG_Chat_ID: '-1', LINK_SECRET: 'too short' };
+        for (const fields of [{ expiresIn: '3600' }, { part: '1' }, { encSalt: 'AAAAAAAAAAAAAAAAAAAAAA', encIv: 'BBBBBBBBBBBB', encIter: '600000' }]) {
+            const { res, calls } = await upload(fields, env);
+            assert.strictEqual(res.status, 500, JSON.stringify(fields));
+            assert.match((await res.json()).error, /LINK_SECRET must be at least 32 characters/);
+            assert.deepStrictEqual(calls, [], 'no orphan upload in the channel');
+        }
+    });
+
+    it('plain uploads, which need no secret, are not blocked by it', async function () {
+        const { res, calls } = await upload({}, { TG_Bot_Token: 'T:T', TG_Chat_ID: '-1', LINK_SECRET: 'too short' });
+        assert.strictEqual(res.status, 200);
+        assert.strictEqual(calls.length, 1);
+    });
+});
+

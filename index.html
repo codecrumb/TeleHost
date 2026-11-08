@@ -1709,7 +1709,11 @@
         }
         if (!files.length) return;
 
-        const listing = files.slice(0, 5).map(function (f) { return '\u2022 ' + f.name; }).join('\n');
+        // Names come from whoever posted the files, so flatten control characters
+        // (no forged lines in the dialog) and cap the length.
+        const plain = function (name) { return name.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ').slice(0, 60); };
+        const size = function (n) { return n < 1048576 ? Math.max(1, Math.round(n / 1024)) + ' KB' : (n / 1048576).toFixed(1) + ' MB'; };
+        const listing = files.slice(0, 5).map(function (f) { return '\u2022 ' + plain(f.name) + ' (' + size(f.size) + ')'; }).join('\n');
         const more = files.length > 5 ? '\n\u2026and ' + (files.length - 5) + ' more' : '';
         if (window.confirm('Upload ' + files.length + ' shared file' + (files.length === 1 ? '' : 's') + '?\n\n' + listing + more)) {
           enqueue(files, takeOptions());

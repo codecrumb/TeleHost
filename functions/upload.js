@@ -1,5 +1,5 @@
 import { authenticateUpload } from './_lib/auth.js';
-import { signReceipt } from './_lib/manifest.js';
+import { linkSecret, signReceipt } from './_lib/manifest.js';
 import { checkEncryption, checkExpiry, cleanMeta } from './_lib/options.js';
 import { RateLimitedError, createManifestLink, failure, getFileId, sendToTelegram } from './_lib/send.js';
 
@@ -30,6 +30,8 @@ export async function onRequestPost(context) {
 
         const expiresIn = checkExpiry(formData.get('expiresIn'));
         const enc = parseEncryption(formData);
+        // Fail before anything reaches Telegram, not after an orphan upload.
+        if (expiresIn || enc || formData.get('part')) linkSecret(env);
 
         const fileName = uploadFile.name;
         const fileExtension = fileName.split('.').pop().toLowerCase();

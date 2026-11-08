@@ -152,7 +152,14 @@ describe('Android share target', function () {
                     win.caches = {
                         open: async () => ({
                             keys: async () => Array.from(cache.keys()).map(url => ({ url })),
-                            match: async req => cache.get(req.url),
+                            // jsdom's File only accepts jsdom's own Blob, so build the parked file with it
+                            match: async req => {
+                                const spec = cache.get(req.url);
+                                return spec && {
+                                    headers: { get: h => (h === 'X-File-Name' ? encodeURIComponent(spec.name) : null) },
+                                    blob: async () => new win.Blob([spec.body], { type: spec.type }),
+                                };
+                            },
                             delete: async req => cache.delete(req.url),
                         }),
                     };
@@ -161,9 +168,7 @@ describe('Android share target', function () {
             return { win: dom.window, doc: dom.window.document, confirms, cache };
         }
 
-        const shared = (name, body, type) => new Response(body, {
-            headers: { 'Content-Type': type, 'X-File-Name': encodeURIComponent(name) },
-        });
+        const shared = (name, body, type) => ({ name, body, type });
 
         it('asks first, then uploads the shared files through the normal queue, with their names', async function () {
             const { win, doc, confirms } = open('?shared=2',
@@ -179,6 +184,18 @@ describe('Android share target', function () {
             );
             assert.strictEqual(win.location.search, '', 'the ?shared flag is removed from the address');
             assert.strictEqual(doc.querySelectorAll('#trayList .job').length, 2);
+            win.close();
+        });
+
+        it('flattens forged lines and control characters in file names, and shows sizes', async function () {
+            const nasty = 'holiday.png\n\u2022 Your bank needs you to upload passport.pdf\u2028OK?\u0007';
+            const { win, confirms } = open('?shared=1', [shared(nasty, 'x'.repeat(2048), 'image/png')], false);
+            await tick(50);
+            const lines = confirms[0].split('\n');
+            assert.strictEqual(lines.filter(l => l.startsWith('\u2022')).length, 1, 'the name cannot add a bullet line');
+            assert.ok(!/[\u0000-\u001f\u2028\u2029]/.test(lines.slice(2).join('')), 'no control characters inside the listing');
+            assert.match(confirms[0], /\(2 KB\)/);
+            assert.ok(lines.every(l => l.length <= 120));
             win.close();
         });
 

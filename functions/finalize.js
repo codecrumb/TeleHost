@@ -1,5 +1,5 @@
 import { authenticateUpload } from './_lib/auth.js';
-import { verifyReceipt } from './_lib/manifest.js';
+import { linkSecret, verifyReceipt } from './_lib/manifest.js';
 import { checkEncryption, checkExpiry, cleanMeta } from './_lib/options.js';
 import { RateLimitedError, createManifestLink } from './_lib/send.js';
 import { isValidFileId } from './_lib/telegram.js';
@@ -22,6 +22,7 @@ export async function onRequestPost({ request, env }) {
         const authResponse = authenticateUpload(request, env);
         if (authResponse) return authResponse;
         if (!env.TG_Bot_Token || !env.TG_Chat_ID) throw new Error('Server is missing TG_Bot_Token or TG_Chat_ID');
+        linkSecret(env);
 
         const raw = await request.text();
         if (raw.length > MAX_BODY_BYTES) throw new BadRequest('Request too large');

@@ -66,7 +66,8 @@ or sent to clients, and is the HMAC key material for manifests (see below).
   file POST, which any website could also send. The service worker only parks
   the files in a temporary cache and redirects to the upload page; the page shows
   a "Upload N shared files?" prompt and uploads nothing without a yes, clearing
-  the parked files either way. The worker handles no other request and caches
+  the parked files either way. File names in that prompt are flattened (no
+  control characters or forged lines) and shown with their sizes. The worker handles no other request and caches
   nothing else, so it cannot serve stale or tampered pages.
 - **IP logging is opt-in.** `LOG_UPLOADER_IP=true` adds the uploader's IP
   (from `CF-Connecting-IP` only, never `X-Forwarded-For`) and country to the
@@ -92,8 +93,11 @@ or sent to clients, and is the HMAC key material for manifests (see below).
   receipts are separate HKDF outputs of that secret.
 - **Cleanup on expiry is lazy and rate limited.** Messages are deleted when
   someone opens an expired link, at most once per link per hour per Cloudflare
-  location (remembered in the edge cache), one slice of up to 40 messages at a
-  time, so hammering an expired link cannot burn the bot's rate limit. A link
+  location (remembered in the edge cache, and only trusted if the marker reads
+  back, since the Cache API can silently do nothing on some domains; without it
+  only about one request in five cleans up, and deletes at most 5), one slice of
+  up to 40 messages at a time, so hammering an expired link cannot burn the bot's
+  rate limit. A link
   nobody opens again keeps its file in the channel, and a file of over 40 parts
   needs visits in more than one hour to be fully cleaned up.
 - **Password files rely on password strength.** Anyone holding the ciphertext
@@ -114,6 +118,10 @@ or sent to clients, and is the HMAC key material for manifests (see below).
   tinyurl to be shortened (so for an expiring link the shortener sees the live
   `/s/` address). Choose "None" in `/settings` to avoid that. JSZip (used to zip
   folders) is loaded from cdnjs, pinned with Subresource Integrity.
+- **The share prompt is a native `confirm()`.** A cross-site page can still make
+  it appear (with sanitised names), attributed to your site; it uploads nothing
+  unless someone clicks OK. A custom in-page prompt would make the origin of the
+  files clearer.
 - **Referer allowlisting is best-effort.** Empty referers always pass, and a
   referer can be forged outside a browser.
 - **No script-src Content-Security-Policy on the app's own pages**

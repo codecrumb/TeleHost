@@ -7,6 +7,7 @@ const MAX_MANIFEST_BYTES = 16 * 1024; // 64 parts of ~140 bytes plus metadata
 const MAX_DELETES_PER_VISIT = 40; // each delete is a subrequest; Workers allow 50 on the free plan
 const CLEANUP_INTERVAL_SECONDS = 3600;
 const MAX_DELETES_WITHOUT_MEMORY = 5;
+const CLEANUP_SAMPLE_RATE_WITHOUT_MEMORY = 0.2;
 
 const text = (body, status) => new Response(body, {
     status,
@@ -39,10 +40,15 @@ async function cleanUpExpired(env, manifest, manifestId, isMultiPart) {
         const marker = new Request(`https://cleanup.invalid/${manifestId}`);
         if (await caches.default.match(marker)) return;
         await caches.default.put(marker, new Response('1', { headers: { 'Cache-Control': `max-age=${CLEANUP_INTERVAL_SECONDS}` } }));
-        remembered = true;
+        // The Cache API is a silent no-op on some domains: only trust the marker if it reads back.
+        remembered = !!(await caches.default.match(marker));
     } catch {
         // no edge cache here (or it failed): fall through with the small cap
     }
+
+    // With no memory at all, a hammered link would trigger cleanup on every request;
+    // sample instead, so the average cost stays a small fraction of a call per request.
+    if (!remembered && Math.random() >= CLEANUP_SAMPLE_RATE_WITHOUT_MEMORY) return;
 
     const limit = remembered ? MAX_DELETES_PER_VISIT : MAX_DELETES_WITHOUT_MEMORY;
     const slices = Math.ceil(ids.length / limit);

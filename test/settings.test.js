@@ -33,6 +33,8 @@ describe('settings', function () {
             assert.strictEqual(normalize({ historyMax: 9999 }).historyMax, 500);
             assert.strictEqual(normalize({ historyMax: -5 }).historyMax, 0);
             assert.strictEqual(normalize({ concurrency: 0 }).concurrency, 1);
+            assert.strictEqual(normalize({ autoDownload: 'always' }).autoDownload, 'always');
+            assert.strictEqual(normalize({ autoDownload: 'rm -rf' }).autoDownload, 'smart');
             assert.ok(validTemplate('https://a.example/s?u={url}'));
             assert.ok(!validTemplate('http://a.example/s?u={url}'));
             assert.ok(!validTemplate('https://a.example/s'));
@@ -59,9 +61,10 @@ describe('settings', function () {
             change(win, 'historyMax', '12');
             change(win, 'shortener', 'dagd');
             change(win, 'concurrency', '1');
+            change(win, 'autoDownload', 'never');
             assert.deepStrictEqual(
-                { h: stored(win).historyMax, s: stored(win).shortener, c: stored(win).concurrency },
-                { h: 12, s: 'dagd', c: 1 }
+                { h: stored(win).historyMax, s: stored(win).shortener, c: stored(win).concurrency, a: stored(win).autoDownload },
+                { h: 12, s: 'dagd', c: 1, a: 'never' }
             );
             win.close();
         });
@@ -99,7 +102,7 @@ describe('settings', function () {
             assert.strictEqual(win.localStorage.getItem('th_resume:a:1:2:3'), null);
             assert.strictEqual(win.localStorage.getItem('th_mode'), 'original', 'unrelated keys are untouched');
             win.document.getElementById('reset').click();
-            assert.deepStrictEqual(stored(win), { historyMax: 100, shortener: 'auto', customShortener: '', concurrency: 2 });
+            assert.deepStrictEqual(stored(win), { historyMax: 100, shortener: 'auto', customShortener: '', concurrency: 2, autoDownload: 'smart' });
             win.close();
         });
 

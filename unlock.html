@@ -69,6 +69,7 @@
     </div>
   </div>
 
+  <script src="/settings.js"></script>
   <script>
     (function () {
       var nameEl = document.getElementById('name'), metaEl = document.getElementById('meta');
@@ -287,9 +288,16 @@
           el.src = URL.createObjectURL(new Blob([plain], { type: type }));
           previewBox.appendChild(el);
         }
+
+        // "smart": download what cannot be previewed; media is shown instead.
+        var mode = (window.THSettings ? THSettings.load() : {}).autoDownload || 'smart';
+        if (mode === 'always' || (mode === 'smart' && !el)) {
+          setStatus('Download started.');
+          save();
+        }
       }
 
-      downloadBtn.addEventListener('click', function () {
+      function save() {
         var a = document.createElement('a');
         a.href = URL.createObjectURL(new Blob([plain], { type: 'application/octet-stream' }));
         a.download = info.name;
@@ -297,7 +305,9 @@
         a.click();
         a.remove();
         setTimeout(function () { URL.revokeObjectURL(a.href); }, 60000);
-      });
+      }
+
+      downloadBtn.addEventListener('click', save);
     })();
   </script>
 </body>

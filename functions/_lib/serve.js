@@ -1,7 +1,14 @@
 // ALLOWED_REFERERS is a comma-separated hostname allowlist ("example.com,*.example.org").
 // Empty referers (direct visits, curl, native apps) always pass, as does the
 // deployment's own origin; the feature is off when the var is unset.
+// Hotlink protection is about other sites EMBEDDING your files (images, video,
+// iframes...), not about people reading a link. A top-level page load always
+// carries the Referer of wherever the link was clicked (a web chat, a shortener,
+// a search page), so judging it by that would lock out the very people a link
+// was sent to. Browsers label such loads Sec-Fetch-Dest: document.
 export function isRefererAllowed(env, request, url) {
+    if (request.headers.get('Sec-Fetch-Dest') === 'document') return true;
+
     const allowlist = String(env.ALLOWED_REFERERS || '')
         .split(',')
         .map(entry => entry.trim().toLowerCase())

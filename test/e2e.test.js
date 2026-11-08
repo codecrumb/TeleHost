@@ -67,14 +67,18 @@ describe('big file end to end: encrypt, upload parts, finalize, download, decryp
         assert.strictEqual(res.status, 200, await res.clone().text());
     }
 
-    async function openViewer() {
+    async function openViewer(settings) {
         const { onRequest } = await import('../functions/s/[id].js');
         const created = [];
-        const dom = new JSDOM(read('unlock.html'), {
+        const clicks = [];
+        const html = read('unlock.html').replace('<script src="/settings.js"></script>', () => `<script>${read('settings.js')}</script>`);
+        const dom = new JSDOM(html, {
             url: `https://x.test/s/${manifestId}`,
             runScripts: 'dangerously',
             pretendToBeVisual: true,
             beforeParse(win) {
+                if (settings) win.localStorage.setItem('th_settings', JSON.stringify(settings));
+                win.HTMLAnchorElement.prototype.click = function () { clicks.push(this.download); };
                 Object.defineProperty(win, 'crypto', { value: webcrypto, configurable: true });
                 win.URL.createObjectURL = blob => { created.push(blob); return `blob:${created.length}`; };
                 win.URL.revokeObjectURL = () => {};
@@ -85,7 +89,7 @@ describe('big file end to end: encrypt, upload parts, finalize, download, decryp
                 };
             },
         });
-        return { win: dom.window, doc: dom.window.document, created };
+        return { win: dom.window, doc: dom.window.document, created, clicks };
     }
 
     const text = el => el.textContent;
@@ -142,5 +146,41 @@ describe('big file end to end: encrypt, upload parts, finalize, download, decryp
         const { doc } = await openViewer();
         await until(() => /expired/.test(text(doc.getElementById('status'))));
         assert.ok(doc.getElementById('status').classList.contains('error'));
+    });
+
+    describe('after unlocking', function () {
+        async function publishAndOpen(type, name, settings) {
+            const receipts = await uploadParts(['ab', 'cd']);
+            await finalize({ receipts, name, type, size: 4, expiresIn: 3600 });
+            const viewer = await openViewer(settings);
+            await until(() => !viewer.doc.getElementById('result').classList.contains('hidden'));
+            return viewer;
+        }
+
+        it('smart (the default) downloads a file straight away', async function () {
+            const { doc, clicks } = await publishAndOpen('application/zip', 'bundle.zip');
+            assert.deepStrictEqual(clicks, ['bundle.zip']);
+            assert.strictEqual(doc.getElementById('status').textContent, 'Download started.');
+        });
+
+        it('smart shows a photo instead of downloading it, and the button still works', async function () {
+            const { doc, clicks } = await publishAndOpen('image/png', 'pic.png');
+            assert.deepStrictEqual(clicks, []);
+            assert.ok(doc.querySelector('#previewBox img'));
+            doc.getElementById('download').click();
+            assert.deepStrictEqual(clicks, ['pic.png']);
+        });
+
+        it('always downloads, even something it also previews', async function () {
+            const { clicks } = await publishAndOpen('image/png', 'pic.png', { autoDownload: 'always' });
+            assert.deepStrictEqual(clicks, ['pic.png']);
+        });
+
+        it('never leaves it to the button', async function () {
+            const { doc, clicks } = await publishAndOpen('application/zip', 'bundle.zip', { autoDownload: 'never' });
+            assert.deepStrictEqual(clicks, []);
+            doc.getElementById('download').click();
+            assert.deepStrictEqual(clicks, ['bundle.zip']);
+        });
     });
 });

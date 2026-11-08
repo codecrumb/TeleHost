@@ -122,8 +122,11 @@ or sent to clients, and is the HMAC key material for manifests (see below).
   it appear (with sanitised names), attributed to your site; it uploads nothing
   unless someone clicks OK. A custom in-page prompt would make the origin of the
   files clearer.
-- **Referer allowlisting is best-effort.** Empty referers always pass, and a
-  referer can be forged outside a browser.
+- **Referer allowlisting is best-effort.** It only judges embedded loads
+  (images, video, iframes, scripts); a top-level page load (`Sec-Fetch-Dest:
+  document`) is never blocked, since it carries the Referer of whatever link was
+  clicked. Empty referers always pass, a referer can be forged outside a browser,
+  and browsers too old to send Fetch Metadata fall back to the plain Referer rule.
 - **No script-src Content-Security-Policy on the app's own pages**
   (`index.html`, `join.html`, `unlock.html`, `settings.html`): they use inline
   scripts. A restricted policy (`frame-ancestors`, `base-uri`, `object-src`,

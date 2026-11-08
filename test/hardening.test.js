@@ -285,3 +285,53 @@ describe('link secret is checked before anything is stored', function () {
     });
 });
 
+describe('hotlink protection judges embeds, not people opening a link', function () {
+    const env = { ALLOWED_REFERERS: 'good.example,*.fine.example' };
+    const url = new URL('https://host.test/s/abc');
+    const check = async headers => {
+        const { isRefererAllowed } = await import('../functions/_lib/serve.js');
+        return isRefererAllowed(env, new Request(url, { headers }), url);
+    };
+
+    it('lets a page load through whatever site the link was clicked on', async function () {
+        assert.strictEqual(await check({ 'Sec-Fetch-Dest': 'document', Referer: 'https://web.whatsapp.com/' }), true);
+        assert.strictEqual(await check({ 'Sec-Fetch-Dest': 'document', Referer: 'https://tinyurl.com/x' }), true);
+    });
+
+    it('still blocks other sites embedding the file', async function () {
+        for (const dest of ['image', 'video', 'audio', 'iframe', 'script', 'embed', 'object', 'empty']) {
+            assert.strictEqual(await check({ 'Sec-Fetch-Dest': dest, Referer: 'https://evil.example/page' }), false, dest);
+        }
+    });
+
+    it('keeps the plain Referer rule for browsers without Fetch Metadata, and the allowlist', async function () {
+        assert.strictEqual(await check({ Referer: 'https://evil.example/page' }), false);
+        assert.strictEqual(await check({ Referer: 'https://good.example/page' }), true);
+        assert.strictEqual(await check({ Referer: 'https://a.fine.example/page' }), true);
+        assert.strictEqual(await check({ Referer: 'https://host.test/s/abc' }), true, 'own pages');
+        assert.strictEqual(await check({}), true, 'no referer');
+    });
+
+    it('opening a /s/ link from a non-allowlisted site now shows the page instead of the hotlink message', async function () {
+        const e = { ...env, TG_Bot_Token: 'T:T', ASSETS: { fetch: async () => new Response('<html>unlock</html>') } };
+        const { sealManifest } = await import('../functions/_lib/manifest.js');
+        const sealed = await sealManifest(e, { v: 1, parts: [{ fileId: 'P'.repeat(30), msgId: 1, size: 1 }], name: 'x', type: '', size: 1, exp: Date.now() + 60000 });
+        const realFetch = global.fetch;
+        global.fetch = async u => String(u).includes('/getFile')
+            ? Response.json({ ok: true, result: { file_path: 'documents/m.bin' } })
+            : new Response(sealed);
+        try {
+            const { onRequest } = await import('../functions/s/[id].js');
+            const id = 'M'.repeat(30);
+            const open = headers => onRequest({ request: new Request(`https://host.test/s/${id}`, { headers }), env: e, params: { id } });
+            const navigation = await open({ 'Sec-Fetch-Dest': 'document', Referer: 'https://web.whatsapp.com/' });
+            assert.strictEqual(navigation.status, 200);
+            assert.match(await navigation.text(), /unlock/);
+            const embed = await open({ 'Sec-Fetch-Dest': 'iframe', Referer: 'https://evil.example/' });
+            assert.strictEqual(embed.status, 403);
+        } finally {
+            global.fetch = realFetch;
+        }
+    });
+});
+

@@ -198,7 +198,8 @@
       // Only same-origin /file/ paths are allowed, so a crafted link can't make
       // this page fetch from somewhere else.
       function isFilePath(p) {
-        return typeof p === 'string' && /^\/file\/[A-Za-z0-9_.\-]+$/.test(p);
+        return typeof p === 'string' &&
+          /^\/file\/[A-Za-z0-9_-]{20,}(~[A-Za-z0-9_-]{20,})?\.[A-Za-z0-9]{1,10}$/.test(p);
       }
 
       function save() {
@@ -355,7 +356,10 @@
         manualBody.textContent = '';
         var total = manifest.parts.length;
         var pad = String(total).length;
-        var base = savedName;
+        // The name comes from an uploaded manifest, so it never reaches a shell as
+        // is: only plain characters survive, and a leading "-" cannot pass as an option.
+        var base = savedName.replace(/[^A-Za-z0-9._\-]/g, '_').slice(0, 120).replace(/^[-.]+/, 'file_');
+        if (!base) base = 'download';
 
         // Each part is saved as "<name>.partNN" via the download attribute.
         var names = manifest.parts.map(function (p, i) {

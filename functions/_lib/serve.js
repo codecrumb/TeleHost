@@ -45,24 +45,32 @@ export const CONTENT_TYPES_BY_EXTENSION = {
 // Content-Type Telegram guessed for it.
 const SAFE_INLINE = /^(image\/(png|jpeg|gif|webp|avif|apng|bmp|x-icon|vnd\.microsoft\.icon)|video\/|audio\/|application\/pdf)/;
 
+// Header values must be Latin-1, so a Hebrew or Chinese name needs an ASCII
+// fallback plus the RFC 5987 filename* form, and nothing may inject CR/LF or quotes.
+export function contentDisposition(kind, filename) {
+    const name = String(filename).replace(/[\u0000-\u001f\u007f]/g, '_').slice(0, 200);
+    const ascii = name.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_');
+    const encoded = encodeURIComponent(name).replace(/['()*]/g, c => '%' + c.charCodeAt(0).toString(16).toUpperCase());
+    return `${kind}; filename="${ascii}"; filename*=UTF-8''${encoded}`;
+}
+
 export function withFileHeaders(response, filename) {
     const upstreamType = (response.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase();
     const extension = String(filename).split('.').pop().toLowerCase();
     // Telegram often answers application/octet-stream, which breaks previews:
     // fall back to our own extension map (which only holds safe types).
     const type = SAFE_INLINE.test(upstreamType) ? upstreamType : (CONTENT_TYPES_BY_EXTENSION[extension] || null);
-    const safeName = String(filename).replace(/["\\\r\n]/g, '_');
 
     const headers = new Headers(response.headers);
     headers.set('X-Content-Type-Options', 'nosniff');
     if (type) {
         headers.set('Content-Type', type);
-        headers.set('Content-Disposition', `inline; filename="${safeName}"`);
+        headers.set('Content-Disposition', contentDisposition('inline', filename));
         // Chrome refuses to show PDFs under a sandbox policy; everything else is fine.
         if (type !== 'application/pdf') headers.set('Content-Security-Policy', 'sandbox');
     } else {
         headers.set('Content-Type', 'application/octet-stream');
-        headers.set('Content-Disposition', `attachment; filename="${safeName}"`);
+        headers.set('Content-Disposition', contentDisposition('attachment', filename));
     }
     return new Response(response.body, {
         status: response.status,

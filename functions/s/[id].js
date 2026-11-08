@@ -5,6 +5,8 @@ import { RateLimitError, deleteMessage, fetchTelegramFile, getFilePath, isValidF
 
 const MAX_MANIFEST_BYTES = 16 * 1024; // 64 parts of ~140 bytes plus metadata
 const MAX_DELETES_PER_VISIT = 40; // each delete is a subrequest; Workers allow 50 on the free plan
+const CLEANUP_INTERVAL_SECONDS = 3600;
+const MAX_DELETES_WITHOUT_MEMORY = 5;
 
 const text = (body, status) => new Response(body, {
     status,
@@ -20,6 +22,32 @@ async function loadManifest(env, manifestId) {
     if (Number(res.headers.get('Content-Length')) > MAX_MANIFEST_BYTES) return null;
     const bytes = new Uint8Array(await res.arrayBuffer());
     return bytes.length > MAX_MANIFEST_BYTES ? null : openManifest(env, bytes);
+}
+
+// Deleting the messages of an expired link is best effort, and must not become a
+// way to burn the bot's Telegram rate limit by hammering one expired link. So: at
+// most one cleanup per link per hour per Cloudflare location (remembered in the
+// edge cache, no storage needed), and each cleanup deletes one slice of up to 40
+// messages, a different slice each hour, so very large files are covered over
+// time. Without a usable cache only a handful are deleted per visit.
+async function cleanUpExpired(env, manifest, manifestId, isMultiPart) {
+    const ids = [manifest.msgId, ...(isMultiPart ? manifest.parts.map(p => p && p.msgId) : [])].filter(Number.isInteger);
+    if (!ids.length) return;
+
+    let remembered = false;
+    try {
+        const marker = new Request(`https://cleanup.invalid/${manifestId}`);
+        if (await caches.default.match(marker)) return;
+        await caches.default.put(marker, new Response('1', { headers: { 'Cache-Control': `max-age=${CLEANUP_INTERVAL_SECONDS}` } }));
+        remembered = true;
+    } catch {
+        // no edge cache here (or it failed): fall through with the small cap
+    }
+
+    const limit = remembered ? MAX_DELETES_PER_VISIT : MAX_DELETES_WITHOUT_MEMORY;
+    const slices = Math.ceil(ids.length / limit);
+    const slice = Math.floor(Date.now() / (CLEANUP_INTERVAL_SECONDS * 1000)) % slices;
+    await Promise.all(ids.slice(slice * limit, (slice + 1) * limit).map(id => deleteMessage(env, id)));
 }
 
 // /s/<manifest_id>.<ext>: serves the file a signed manifest points at, until
@@ -50,10 +78,7 @@ async function serve({ request, env, params }) {
     const query = new URL(request.url).searchParams;
 
     if (typeof manifest.exp === 'number' && Date.now() >= manifest.exp) {
-        const messageIds = [manifest.msgId, ...(isMultiPart ? manifest.parts.map(p => p && p.msgId) : [])]
-            .filter(Number.isInteger)
-            .slice(0, MAX_DELETES_PER_VISIT);
-        await Promise.all(messageIds.map(id => deleteMessage(env, id)));
+        await cleanUpExpired(env, manifest, manifestId, isMultiPart);
         return text('This link has expired.', 410);
     }
 

@@ -69,8 +69,9 @@ describe('upload page', function () {
         assert.ok(document.getElementById('tray').classList.contains('stacked'));
 
         requests[0].progress(50, 100);
-        assert.strictEqual(label(0), 'Uploading 50%');
-        assert.strictEqual(document.getElementById('trayPct').textContent, '25%'.replace('25', String(Math.round((50 * 100 + 0) / 200))));
+        assert.strictEqual(rows()[0].querySelector('.job-pct').textContent, '50%');
+        assert.strictEqual(document.getElementById('trayPct').textContent, '25%', 'combined: (50% + 0%) of two equal files');
+        assert.strictEqual(document.getElementById('trayCount').textContent, '2');
 
         requests[0].ok('/file/AAAA1.png');
         await tick();
@@ -145,6 +146,17 @@ describe('upload page', function () {
         requests[0].ok('/s/MMMM.png');
         await tick();
         assert.strictEqual(requests[1].body.get('expiresIn'), null, 'next batch is not expiring');
+    });
+
+    it('shows a single upload as one card with one progress bar', async function () {
+        pick('a.png');
+        await tick();
+        const tray = document.getElementById('tray');
+        assert.ok(tray.classList.contains('single'));
+        assert.ok(!tray.classList.contains('stacked'));
+        requests[0].progress(43, 100);
+        assert.strictEqual(rows()[0].querySelector('.job-pct').textContent, '43%');
+        assert.strictEqual(document.querySelectorAll('.tray .job-bar, .tray .tray-total').length, 2, 'the header bar exists in the DOM but is hidden by CSS for a single upload');
     });
 
     it('toggles the tray list on tap for touch screens', async function () {

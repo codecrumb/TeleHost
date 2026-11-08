@@ -448,11 +448,11 @@
       border-radius: 12px; box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
     }
     .tray.stacked .tray-card::before, .tray.stacked .tray-card::after {
-      content: ''; position: absolute; height: 100%; background: #161616;
-      border: 1px solid #2a2a2a; border-radius: 12px; z-index: -1;
+      content: ''; position: absolute; height: 100%; background: #1c1c1c;
+      border: 1px solid #333; border-radius: 12px; z-index: -1;
     }
-    .tray.stacked .tray-card::before { left: 8px; right: 8px; bottom: -6px; }
-    .tray.stacked .tray-card::after { left: 16px; right: 16px; bottom: -12px; z-index: -2; background: #131313; }
+    .tray.stacked .tray-card::before { left: 9px; right: 9px; bottom: -7px; }
+    .tray.stacked .tray-card::after { left: 18px; right: 18px; bottom: -14px; z-index: -2; background: #161616; }
     .tray.open .tray-card::before, .tray.open .tray-card::after { display: none; }
     .tray-head {
       position: relative; width: 100%; display: flex; align-items: center; gap: 10px;
@@ -482,6 +482,19 @@
     .job-fill { height: 100%; width: 0; background: #4a9eff; transition: width 0.15s; }
     .job[data-state="done"] .job-fill { background: #4ade80; }
     .job[data-state="error"] .job-fill { background: #e05252; }
+
+    /* One upload: just its own card, no header. Several: header + counter + stack. */
+    .tray.single .tray-head { display: none; }
+    .tray.single .tray-list { display: block; border-top: none; }
+    .tray-count {
+      display: none; position: absolute; top: -9px; left: -9px; z-index: 2;
+      min-width: 22px; height: 22px; padding: 0 6px; border-radius: 11px;
+      background: #4a9eff; color: #07121f; font-size: 0.72rem; font-weight: 700;
+      line-height: 22px; text-align: center; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+    }
+    .tray.stacked .tray-count { display: block; }
+    .job-pct { grid-column: 2; grid-row: 1 / span 2; font-size: 0.82rem; color: #888; font-variant-numeric: tabular-nums; }
+    .job-pct[hidden] { display: none; }
     @media (max-width: 600px), (hover: none) {
       .tray { left: 50%; right: auto; transform: translateX(-50%); width: min(92vw, 360px); bottom: 14px; }
     }
@@ -553,6 +566,7 @@
   <!-- Uploads in progress: a stack in the corner (centered on phones) -->
   <div id="tray" class="tray" hidden role="region" aria-label="Uploads">
     <div class="tray-card">
+      <span id="trayCount" class="tray-count" aria-hidden="true"></span>
       <button id="trayHead" class="tray-head" type="button" aria-expanded="false" aria-controls="trayList">
         <span id="traySummary" class="tray-summary"></span>
         <span id="trayPct" class="tray-pct"></span>
@@ -790,6 +804,8 @@
         nameEl.title = name;
         const labelEl = document.createElement('div');
         labelEl.className = 'job-label';
+        const pctEl = document.createElement('div');
+        pctEl.className = 'job-pct';
         const retry = document.createElement('button');
         retry.type = 'button';
         retry.className = 'job-retry';
@@ -807,8 +823,8 @@
         const fill = document.createElement('div');
         fill.className = 'job-fill';
         bar.appendChild(fill);
-        row.append(nameEl, labelEl, retry, x, bar);
-        job.el = { row: row, label: labelEl, fill: fill, bar: bar, retry: retry, x: x };
+        row.append(nameEl, labelEl, pctEl, retry, x, bar);
+        job.el = { row: row, label: labelEl, pct: pctEl, fill: fill, bar: bar, retry: retry, x: x };
 
         x.addEventListener('click', function () { cancelJob(job); });
         retry.addEventListener('click', function () {
@@ -830,6 +846,8 @@
         el.label.textContent = job.label;
         el.row.dataset.state = job.state;
         el.fill.style.width = job.pct + '%';
+        el.pct.hidden = job.state !== 'uploading';
+        el.pct.textContent = job.pct + '%';
         el.bar.setAttribute('aria-valuenow', String(job.pct));
         el.retry.hidden = !(job.state === 'error' && job.file);
         el.x.hidden = job.state === 'done';
@@ -864,6 +882,8 @@
       function updateTray() {
         trayEl.hidden = jobs.length === 0;
         trayEl.classList.toggle('stacked', jobs.length > 1);
+        trayEl.classList.toggle('single', jobs.length === 1);
+        document.getElementById('trayCount').textContent = String(jobs.length);
         const active = jobs.filter(isActive);
         const failed = jobs.filter(function (j) { return j.state === 'error'; });
         const weight = function (j) { return j.size || 1; };
@@ -873,7 +893,7 @@
           : 100;
         if (jobs.length === 1) {
           traySummary.textContent = jobs[0].name;
-          trayPct.textContent = jobs[0].state === 'queued' ? '' : jobs[0].state === 'error' ? 'Failed' : jobs[0].pct + '%';
+          trayPct.textContent = '';
         } else if (active.length) {
           traySummary.textContent = active.length + ' uploads' + (failed.length ? ' · ' + failed.length + ' failed' : '');
           trayPct.textContent = pct + '%';
@@ -1159,7 +1179,7 @@
 
         const item = await postWithRetry(toSend, options.mode, fields, job, function (fraction) {
           const pct = Math.round(fraction * 100);
-          setJob(job, { pct: pct, label: fraction >= 1 ? 'Processing…' : 'Uploading ' + pct + '%' });
+          setJob(job, { pct: pct, label: fraction >= 1 ? 'Processing…' : 'Uploading…' });
         });
         return {
           url: window.location.origin + item.src,

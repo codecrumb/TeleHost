@@ -53,7 +53,11 @@ or sent to clients, and is the HMAC key material for manifests (see below).
   leaves the browser. The server accepts only sane parameters (iterations
   between 100,000 and 1,000,000, bounded-length salt/IV). The unlock page only
   previews known-safe media types and downloads everything else as plain bytes.
-- **Upload auth is constant-time** when Basic auth is enabled.
+- **Upload auth** (when `UPLOAD_BASIC_USER` / `UPLOAD_BASIC_PASS` are set) is
+  constant-time, does not reveal the password length, fails closed if either
+  variable is blank or only one is set, and refuses cross-site requests
+  (`Sec-Fetch-Site` / `Origin` checks), since browsers resend cached Basic
+  credentials on cross-site form posts.
 - **Rate limits are passed on, not absorbed.** If Telegram answers 429 the
   worker returns 429 with `Retry-After` immediately (it never sleeps), and the
   browser waits and retries.
@@ -75,22 +79,40 @@ or sent to clients, and is the HMAC key material for manifests (see below).
   check. For the same reason there are no one-time downloads.
 - **Rotating `TG_Bot_Token` breaks existing `/s/` links**, because the manifest
   key derives from it (plain `/file/` links are unaffected).
-- **Cleanup on expiry is lazy.** The message is deleted when someone opens an
-  expired link; a link nobody opens again keeps its file in the channel.
+- **Cleanup on expiry is lazy and rate limited.** Messages are deleted when
+  someone opens an expired link, at most once per link per hour per Cloudflare
+  location (remembered in the edge cache), one slice of up to 40 messages at a
+  time, so hammering an expired link cannot burn the bot's rate limit. A link
+  nobody opens again keeps its file in the channel, and a file of over 40 parts
+  needs visits in more than one hour to be fully cleaned up.
 - **Password files rely on password strength.** Anyone holding the ciphertext
   can try passwords offline. A lost password cannot be recovered.
 - **Plain chunked files (over 19 MiB, no expiry or password)** keep their part
   links as ordinary public `/file/` links; only files given an expiry or a
   password use the protected `/s/` path, where part ids are never exposed.
-- **Big files with an expiry or password cannot resume** an interrupted upload,
-  and expiry cleanup deletes at most 40 messages per visit (a Workers
-  subrequest limit), so a very large expired file may need a second visit to be
-  fully cleaned up. The link itself stops working at once.
+- **Big files with an expiry or password cannot resume** an interrupted upload.
+  The link itself stops working at once when it expires.
+- **`?meta=1` is readable by anyone holding a protected link.** It returns the
+  original file name, type, size and the (public) key-derivation parameters even
+  for password-protected files, so the name of a protected file is not secret.
+  The contents are.
+- **A video's thumbnail outlives its expiry.** The (320 px) thumbnail used for
+  link previews is an ordinary `/file/` link and stays fetchable after the main
+  file's link expires.
+- **Third parties see your links.** By default every new link is sent to da.gd or
+  tinyurl to be shortened (so for an expiring link the shortener sees the live
+  `/s/` address). Choose "None" in `/settings` to avoid that. JSZip (used to zip
+  folders) is loaded from cdnjs, pinned with Subresource Integrity.
 - **Referer allowlisting is best-effort.** Empty referers always pass, and a
   referer can be forged outside a browser.
-- **No Content-Security-Policy on the app's own pages** (`index.html`,
-  `join.html`, `unlock.html`): they use inline scripts. They render user data
-  (file names, URLs) only through `textContent`.
+- **No script-src Content-Security-Policy on the app's own pages**
+  (`index.html`, `join.html`, `unlock.html`, `settings.html`): they use inline
+  scripts. A restricted policy (`frame-ancestors`, `base-uri`, `object-src`,
+  `form-action`) and `X-Frame-Options: DENY` are applied, and the pages render
+  user data (file names, URLs) only through `textContent`. The plain `/join`
+  manifests are not sealed, so their contents are treated as untrusted: names
+  are never passed to a shell unsanitised, and part paths must be exactly
+  `/file/<id>.<ext>`.
 - **Dev dependencies:** `npm audit` reports 17 findings, all in dev tooling
   (wrangler, jsdom, mocha). The deployed app has **zero** production
   dependencies (`npm audit --omit=dev`: 0 vulnerabilities). Upgrading wrangler

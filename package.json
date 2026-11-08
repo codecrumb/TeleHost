@@ -7,6 +7,6 @@
   "devDependencies": {
     "jsdom": "^31.0.0",
     "mocha": "^12.0.3",
-    "wrangler": "^3.63.0"
+    "wrangler": "^4.158.0"
   }
 }

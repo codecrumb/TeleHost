@@ -199,3 +199,29 @@ describe('review fixes', function () {
         });
     });
 });
+
+describe('page headers', function () {
+    const read = f => require('fs').readFileSync(require('path').join(__dirname, '..', f), 'utf8');
+
+    it('dynamically served pages cannot be framed and carry nosniff', async function () {
+        const { servePage } = await import('../functions/_lib/serve.js');
+        const res = await servePage({ ASSETS: { fetch: async () => new Response('<html></html>') } }, new Request('https://x.test/s/abc'), 'unlock');
+        assert.strictEqual(res.headers.get('X-Frame-Options'), 'DENY');
+        assert.strictEqual(res.headers.get('X-Content-Type-Options'), 'nosniff');
+        assert.match(res.headers.get('Content-Security-Policy'), /frame-ancestors 'none'/);
+    });
+
+    it('static pages get the same set from /_headers', function () {
+        const headers = read('_headers');
+        assert.match(headers, /^\/\*/m);
+        assert.match(headers, /X-Frame-Options: DENY/);
+        assert.match(headers, /frame-ancestors 'none'/);
+    });
+
+    it('the lazily loaded zip library is pinned with SRI', function () {
+        const html = read('index.html');
+        assert.match(html, /jszip\.min\.js'/);
+        assert.match(html, /s\.integrity = 'sha512-/);
+        assert.match(html, /s\.crossOrigin = 'anonymous'/);
+    });
+});

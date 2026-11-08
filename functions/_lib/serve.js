@@ -79,6 +79,16 @@ export function withFileHeaders(response, filename) {
     });
 }
 
+// The app's own pages use inline scripts, so a script-src policy is not possible
+// yet; these still stop framing (clickjacking), plugins, base-tag tricks and
+// form hijacking. The same set is applied to static pages by /_headers.
+export const PAGE_SECURITY_HEADERS = {
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+    'Referrer-Policy': 'strict-origin-when-cross-origin',
+    'Content-Security-Policy': "frame-ancestors 'none'; base-uri 'none'; object-src 'none'; form-action 'self'",
+};
+
 // Serves a static page (e.g. "join" -> join.html) under a dynamic route.
 // Pages serves join.html at the clean URL /join and redirects /join.html there.
 export async function servePage(env, request, name) {
@@ -88,7 +98,7 @@ export async function servePage(env, request, name) {
     }
     return new Response(page.body, {
         status: page.status,
-        headers: { 'Content-Type': 'text/html;charset=UTF-8', 'Cache-Control': 'no-cache' },
+        headers: { 'Content-Type': 'text/html;charset=UTF-8', 'Cache-Control': 'no-cache', ...PAGE_SECURITY_HEADERS },
     });
 }
 

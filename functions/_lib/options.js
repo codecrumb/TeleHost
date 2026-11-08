@@ -1,6 +1,9 @@
 // Validation for the options a client may attach to an upload. The server never
 // trusts these beyond bounds: they only shape the signed manifest it writes.
 
+// Rendering uploaded HTML in the browser is opt-in for the operator: ALLOW_HTML_RENDER=true.
+export const htmlRenderEnabled = env => String(env.ALLOW_HTML_RENDER).toLowerCase() === 'true';
+
 export const MAX_EXPIRY_SECONDS = 30 * 24 * 60 * 60;
 
 // Seconds until the link expires; null when the upload has no expiry.

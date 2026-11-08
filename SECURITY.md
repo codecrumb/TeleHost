@@ -69,6 +69,18 @@ or sent to clients, and is the HMAC key material for manifests (see below).
   the parked files either way. File names in that prompt are flattened (no
   control characters or forged lines) and shown with their sizes. The worker handles no other request and caches
   nothing else, so it cannot serve stale or tampered pages.
+- **Uploaded HTML is only ever rendered in a sandbox, and only if the operator
+  allows it.** By default HTML downloads (`/file/` serves it as an attachment).
+  With `ALLOW_HTML_RENDER=true` and the uploader's choice, `/v/<id>.html` shows an
+  "External Content Notice" first and then the page with `Content-Security-Policy:
+  sandbox allow-scripts allow-forms allow-modals allow-popups` (never
+  `allow-same-origin`). The page therefore has an opaque origin: it cannot read
+  this site's `localStorage` (history, settings), cannot use cached Basic-auth
+  credentials (its requests are cross-origin and the upload CSRF check refuses
+  them), and cannot be framed by others (`frame-ancestors 'none'`). The real page
+  is only served to a navigation that comes from the notice (`Sec-Fetch-Site:
+  same-origin`, or a same-origin Referer in older browsers), so sharing the
+  second URL does not skip the warning.
 - **IP logging is opt-in.** `LOG_UPLOADER_IP=true` adds the uploader's IP
   (from `CF-Connecting-IP` only, never `X-Forwarded-For`) and country to the
   Telegram message. It is off by default. Telling uploaders is up to the
@@ -122,6 +134,16 @@ or sent to clients, and is the HMAC key material for manifests (see below).
   it appear (with sanitised names), attributed to your site; it uploads nothing
   unless someone clicks OK. A custom in-page prompt would make the origin of the
   files clearer.
+- **Rendering HTML makes your domain a host for other people's web pages
+  (`ALLOW_HTML_RENDER`).** The sandbox protects this site and its users' data, not
+  the people who open the page: a phishing page or malware dropper uploaded by
+  someone can look like anything. The notice page warns visitors but cannot stop
+  that, and if a scanner such as Google Safe Browsing flags a hosted page, the
+  warning can apply to your whole domain. Leave it off for public instances; if
+  you turn it on, protect uploads with `UPLOAD_BASIC_USER` / `UPLOAD_BASIC_PASS`
+  and ideally serve the site from a dedicated hostname. Sandboxed pages cannot use
+  cookies or `localStorage`, so some web apps will not work. This was tested
+  against the headers and the routing rules, not in real browsers.
 - **Referer allowlisting is best-effort.** It only judges embedded loads
   (images, video, iframes, scripts); a top-level page load (`Sec-Fetch-Dest:
   document`) is never blocked, since it carries the Referer of whatever link was

@@ -563,6 +563,7 @@
               </select>
             </label>
             <input class="pw" id="passwordInput" type="password" placeholder="Password (optional)" autocomplete="new-password" aria-label="Password (optional)">
+          <label class="expiry" title="HTML files get a link that opens them as a web page, behind a warning page, instead of downloading. Only works if this site's operator has enabled it."><input type="checkbox" id="renderHtml"> Open HTML files in the browser</label>
           </div>
 
           <p id="hint"></p>
@@ -615,6 +616,7 @@
       const segCtrl       = document.getElementById('segCtrl');
       const expirySel     = document.getElementById('expirySel');
       const passwordInput = document.getElementById('passwordInput');
+      const renderHtml    = document.getElementById('renderHtml');
       const optionsBtn    = document.getElementById('optionsBtn');
       const optionsPanel  = document.getElementById('optionsPanel');
       const optionsSummary= document.getElementById('optionsSummary');
@@ -631,6 +633,7 @@
 
       const HINT_KEY  = 'th_hinted';
       const MODE_KEY  = 'th_mode';
+      const RENDER_KEY = 'th_render';
       const HINTS = {
         compressed: 'Smaller file, slightly lower quality',
         original:   'Full quality, larger file',
@@ -671,10 +674,18 @@
         if (currentMode === 'original') bits.push('Original quality');
         if (expirySel.value) bits.push('Expires ' + expirySel.options[expirySel.selectedIndex].text);
         if (passwordInput.value) bits.push('Password');
+        if (renderHtml.checked) bits.push('HTML opens in browser');
         optionsSummary.textContent = bits.join(' \u00B7 ');
       }
 
       expirySel.addEventListener('change', updateOptionsSummary);
+
+      // Remembered between visits, like the quality mode.
+      try { renderHtml.checked = localStorage.getItem(RENDER_KEY) === '1'; } catch (_) {}
+      renderHtml.addEventListener('change', function () {
+        try { localStorage.setItem(RENDER_KEY, renderHtml.checked ? '1' : '0'); } catch (_) {}
+        updateOptionsSummary();
+      });
       passwordInput.addEventListener('input', updateOptionsSummary);
 
       // Expiry and password apply to one batch of uploads, never silently to the next.
@@ -686,7 +697,7 @@
 
       // Snapshot the options for the files being added, then reset the one-shot ones.
       function takeOptions() {
-        const options = { mode: currentMode, expiresIn: expirySel.value, password: passwordInput.value };
+        const options = { mode: currentMode, expiresIn: expirySel.value, password: passwordInput.value, render: renderHtml.checked };
         resetOneShotOptions();
         return options;
       }
@@ -1303,6 +1314,8 @@
         let toSend = file;
         const fields = {};
         if (options.expiresIn) fields.expiresIn = options.expiresIn;
+        // The server decides (it may be switched off) and says so in a note.
+        if (options.render && /\.html?$/i.test(file.name)) fields.render = '1';
         if (options.password) {
           setJob(job, { label: 'Encrypting…' });
           const encrypted = await encryptFile(file, options.password);
@@ -1321,7 +1334,7 @@
         });
         return {
           url: window.location.origin + item.src,
-          note: item.fallback ? 'Stored as original — compressed upload not supported for this file' : '',
+          note: item.note || (item.fallback ? 'Stored as original — compressed upload not supported for this file' : ''),
         };
       }
 

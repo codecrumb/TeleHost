@@ -1,6 +1,6 @@
 import { authenticateUpload } from './_lib/auth.js';
 import { linkSecret, signReceipt } from './_lib/manifest.js';
-import { checkEncryption, checkExpiry, cleanMeta } from './_lib/options.js';
+import { checkEncryption, checkExpiry, cleanMeta, htmlRenderEnabled } from './_lib/options.js';
 import { RateLimitedError, createManifestLink, failure, getFileId, sendToTelegram } from './_lib/send.js';
 
 export async function onRequestPost(context) {
@@ -30,6 +30,7 @@ export async function onRequestPost(context) {
 
         const expiresIn = checkExpiry(formData.get('expiresIn'));
         const enc = parseEncryption(formData);
+        const wantsRender = formData.get('render') === '1';
         // Fail before anything reaches Telegram, not after an orphan upload.
         if (expiresIn || enc || formData.get('part')) linkSecret(env);
 
@@ -111,13 +112,26 @@ export async function onRequestPost(context) {
             };
             const manifestId = await createManifestLink(env, manifest);
             return new Response(
-                JSON.stringify([{ 'src': enc ? `/s/${manifestId}` : `/s/${manifestId}.${fileExtension}`, 'fallback': result.usedFallback || false, 'expires': manifest.exp }]),
+                JSON.stringify([{
+                    'src': enc ? `/s/${manifestId}` : `/s/${manifestId}.${fileExtension}`,
+                    'fallback': result.usedFallback || false,
+                    'expires': manifest.exp,
+                    ...(wantsRender ? { 'note': 'Opening in the browser is not available for expiring or password-protected links, so this link downloads the file.' } : {}),
+                }]),
                 { status: 200, headers: { 'Content-Type': 'application/json' } }
             );
         }
 
+        // "Open HTML in the browser": a /v/ link instead of a /file/ link, if the operator allows it.
+        let src = `/file/${fileId}${thumbId ? '~' + thumbId : ''}.${fileExtension}`;
+        let note;
+        if (wantsRender && ['html', 'htm'].includes(fileExtension)) {
+            if (htmlRenderEnabled(env)) src = `/v/${fileId}.${fileExtension}`;
+            else note = 'Opening HTML in the browser is turned off on this deployment, so this link downloads the file.';
+        }
+
         return new Response(
-            JSON.stringify([{ 'src': `/file/${fileId}${thumbId ? '~' + thumbId : ''}.${fileExtension}`, 'fallback': result.usedFallback || false }]),
+            JSON.stringify([{ 'src': src, 'fallback': result.usedFallback || false, ...(note ? { note } : {}) }]),
             {
                 status: 200,
                 headers: { 'Content-Type': 'application/json' }

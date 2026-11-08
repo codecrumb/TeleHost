@@ -269,6 +269,52 @@ describe('upload page', function () {
         assert.strictEqual(opened, 1);
     });
 
+    describe('"Open HTML files in the browser" option', function () {
+        const checkbox = () => document.getElementById('renderHtml');
+        const flip = on => { checkbox().checked = on; checkbox().dispatchEvent(new window.Event('change')); };
+
+        it('sends render=1 for HTML files only, and only when ticked', async function () {
+            pick('page.html', 'pic.png');
+            await tick();
+            assert.strictEqual(requests[0].body.get('render'), null, 'unticked');
+            requests[0].ok('/file/A0000.html'); requests[1].ok('/file/B0000.png');
+            await tick(30);
+
+            flip(true);
+            pick('site.htm', 'pic.png');
+            await until(() => requests.length >= 4);
+            const sent = Object.fromEntries(requests.slice(2).map(r => [r.body.get('file').name, r.body.get('render')]));
+            assert.deepStrictEqual(sent, { 'site.htm': '1', 'pic.png': null });
+        });
+
+        it('is remembered between visits and shows in the options summary', async function () {
+            flip(true);
+            assert.strictEqual(window.localStorage.getItem('th_render'), '1');
+            assert.match(document.getElementById('optionsSummary').textContent, /HTML opens in browser/);
+            const settingsKept = window.localStorage.getItem('th_render');
+            window.close();
+            makePage();
+            window.localStorage.setItem('th_render', settingsKept);
+            window.close();
+            // a fresh page reads the saved choice
+            const html2 = require('fs').readFileSync(require('path').join(__dirname, '..', 'index.html'), 'utf8')
+                .replace('<script src="/settings.js"></script>', () => `<script>${settingsJs}</script>`);
+            const dom2 = new JSDOM(html2, { url: 'https://host.test/', runScripts: 'dangerously', beforeParse(win) { win.localStorage.setItem('th_render', '1'); win.fetch = () => Promise.reject(new Error('x')); } });
+            assert.strictEqual(dom2.window.document.getElementById('renderHtml').checked, true);
+            dom2.window.close();
+            makePage();
+        });
+
+        it("shows the server's note next to the link when it cannot open it in the browser", async function () {
+            flip(true);
+            pick('page.html');
+            await tick();
+            requests[0].respond(200, [{ src: '/file/NOTEID0000.html', note: 'Opening HTML in the browser is turned off on this deployment, so this link downloads the file.' }]);
+            await tick(30);
+            assert.match(document.querySelector('#historyList .result-note').textContent, /turned off on this deployment/);
+        });
+    });
+
     describe('copy as Markdown / HTML / BBCode', function () {
         let copied;
 

@@ -1,13 +1,11 @@
 {
   "scripts": {
-    "ci-test": "concurrently --kill-others --success first \"npm start\" \"wait-on http://localhost:8080 && mocha --exit\"",
+    "ci-test": "mocha",
     "test": "mocha",
-    "start": "npx wrangler pages dev ./ --kv \"img_url\" --port 8080 --binding BASIC_USER=${BASIC_USER:-admin} --binding BASIC_PASS=${BASIC_PASS:-change-me-local-dev-only} --persist-to ./data"
+    "start": "npx wrangler pages dev ./ --port 8080"
   },
   "devDependencies": {
-    "concurrently": "^8.2.2",
     "mocha": "^10.6.0",
-    "wait-on": "^7.2.0",
     "wrangler": "^3.63.0"
   }
 }

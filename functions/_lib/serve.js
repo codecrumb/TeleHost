@@ -30,7 +30,7 @@ export function isRefererAllowed(env, request, url) {
 
 // svg is deliberately absent: serving user uploads as image/svg+xml would
 // allow stored XSS on the deployment's own origin.
-const CONTENT_TYPES_BY_EXTENSION = {
+export const CONTENT_TYPES_BY_EXTENSION = {
     png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif',
     webp: 'image/webp', avif: 'image/avif', apng: 'image/apng', bmp: 'image/bmp',
     ico: 'image/x-icon',

@@ -654,7 +654,10 @@
         const fd = new FormData();
         fd.append('file', file);
         fd.append('compressionMode', mode);
-        Object.keys(fields || {}).forEach(function (k) { fd.append(k, fields[k]); });
+        Object.keys(fields || {}).forEach(function (k) {
+          if (fields[k] instanceof Blob) fd.append(k, fields[k], 'thumb.jpg');
+          else fd.append(k, fields[k]);
+        });
         const res = await fetch('/upload', { method: 'POST', body: fd });
         const data = await res.json();
         if (!res.ok) {
@@ -726,6 +729,52 @@
         };
       }
 
+      // Grab a frame about a second in (the first frame is often black) as a
+      // small JPEG for link previews. Best effort: resolves null on any failure,
+      // and the server then falls back to Telegram's own thumbnail.
+      function captureThumbnail(file) {
+        return new Promise(function (resolve) {
+          const video = document.createElement('video');
+          const url = URL.createObjectURL(file);
+          let finished = false;
+          const timer = setTimeout(function () { finish(null); }, 8000);
+
+          function finish(blob) {
+            if (finished) return;
+            finished = true;
+            clearTimeout(timer);
+            URL.revokeObjectURL(url);
+            video.removeAttribute('src');
+            resolve(blob);
+          }
+
+          video.muted = true;
+          video.playsInline = true;
+          video.preload = 'metadata';
+          video.onerror = function () { finish(null); };
+          video.onloadedmetadata = function () {
+            video.currentTime = Math.min(1, (video.duration || 2) / 2);
+          };
+          video.onseeked = function () {
+            try {
+              const w = video.videoWidth, h = video.videoHeight;
+              if (!w || !h) return finish(null);
+              const scale = Math.min(1, 320 / Math.max(w, h)); // Telegram caps thumbnails at 320px
+              const canvas = document.createElement('canvas');
+              canvas.width = Math.round(w * scale);
+              canvas.height = Math.round(h * scale);
+              canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+              canvas.toBlob(function (blob) {
+                finish(blob && blob.size <= 200 * 1024 ? blob : null); // Telegram: under 200 kB
+              }, 'image/jpeg', 0.8);
+            } catch (_) {
+              finish(null);
+            }
+          };
+          video.src = url;
+        });
+      }
+
       async function uploadFile(file) {
         showUploading(file.name);
 
@@ -753,6 +802,10 @@
               toSend = encrypted.file;
               Object.assign(fields, encrypted.fields);
               showUploading(file.name);
+            }
+            if (!password && file.type.indexOf('video/') === 0) {
+              const thumbnail = await captureThumbnail(file);
+              if (thumbnail) fields.thumbnail = thumbnail;
             }
             const item = await postFile(toSend, currentMode, fields);
             addResult(window.location.origin + item.src, item.fallback);

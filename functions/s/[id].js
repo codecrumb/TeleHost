@@ -1,3 +1,4 @@
+import { isCrawler, videoPreviewPage } from '../_lib/preview.js';
 import { verifyManifest } from '../_lib/manifest.js';
 import { isRefererAllowed, servePage, withFileHeaders } from '../_lib/serve.js';
 import { deleteMessage, fetchTelegramFile, getFilePath, isValidFileId } from '../_lib/telegram.js';
@@ -54,6 +55,17 @@ export async function onRequest({ request, env, params }) {
             { name: manifest.name, type: manifest.type, size: manifest.size, enc: manifest.enc },
             { headers: { 'Cache-Control': 'no-store' } }
         );
+    }
+
+    if (manifest.thumb && isValidFileId(manifest.thumb) && !manifest.enc && !query.has('raw') &&
+        String(manifest.type).startsWith('video/') && isCrawler(request)) {
+        const origin = new URL(request.url).origin;
+        return videoPreviewPage({
+            title: manifest.name || 'Shared video',
+            videoUrl: `${origin}/s/${manifestId}?raw=1`,
+            thumbUrl: `${origin}/file/${manifest.thumb}.jpg`,
+            videoType: manifest.type,
+        });
     }
 
     const filePath = await getFilePath(env, manifest.fileId);

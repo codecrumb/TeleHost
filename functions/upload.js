@@ -55,6 +55,12 @@ export async function onRequestPost(context) {
             apiEndpoint = 'sendAudio';
         } else if (uploadFile.type.startsWith('video/')) {
             telegramFormData.append("video", uploadFile);
+            telegramFormData.append("supports_streaming", "true");
+            const thumbnail = formData.get('thumbnail');
+            // Bot API: JPEG, at most 200 kB. Telegram falls back to its own thumbnail.
+            if (thumbnail && typeof thumbnail !== 'string' && thumbnail.type === 'image/jpeg' && thumbnail.size <= 200 * 1024) {
+                telegramFormData.append("thumbnail", thumbnail, 'thumb.jpg');
+            }
             apiEndpoint = 'sendVideo';
         } else {
             telegramFormData.append("document", uploadFile);
@@ -73,6 +79,10 @@ export async function onRequestPost(context) {
             throw new Error('Failed to get file ID');
         }
 
+        // Videos carry their thumbnail's file id so link previews can show it.
+        // Never for encrypted uploads, whose content must stay opaque.
+        const thumbId = enc ? null : getThumbId(result.data);
+
         if (expiresIn || enc) {
             // For encrypted uploads the file is ciphertext; the manifest keeps the
             // original name/type/size so the unlock page can restore them.
@@ -85,6 +95,7 @@ export async function onRequestPost(context) {
                 size: enc ? enc.size : uploadFile.size,
                 ...(expiresIn ? { exp: Date.now() + expiresIn * 1000 } : {}),
                 ...(enc ? { enc: enc.params } : {}),
+                ...(thumbId ? { thumb: thumbId } : {}),
             });
             const manifestForm = new FormData();
             manifestForm.append('chat_id', env.TG_Chat_ID);
@@ -99,7 +110,7 @@ export async function onRequestPost(context) {
         }
 
         return new Response(
-            JSON.stringify([{ 'src': `/file/${fileId}.${fileExtension}`, 'fallback': result.usedFallback || false }]),
+            JSON.stringify([{ 'src': `/file/${fileId}${thumbId ? '~' + thumbId : ''}.${fileExtension}`, 'fallback': result.usedFallback || false }]),
             {
                 status: 200,
                 headers: { 'Content-Type': 'application/json' }
@@ -155,6 +166,12 @@ function parseEncryption(formData) {
         type: String(formData.get('encType') || '').slice(0, 100),
         size: Math.max(0, Number(formData.get('encSize')) || 0),
     };
+}
+
+function getThumbId(response) {
+    const video = response.ok && response.result && response.result.video;
+    const thumb = video && (video.thumbnail || video.thumb);
+    return thumb && thumb.file_id ? thumb.file_id : null;
 }
 
 function getFileId(response) {

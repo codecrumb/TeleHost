@@ -1,4 +1,5 @@
-import { isRefererAllowed, withFileHeaders } from '../_lib/serve.js';
+import { isCrawler, videoPreviewPage } from '../_lib/preview.js';
+import { CONTENT_TYPES_BY_EXTENSION, isRefererAllowed, withFileHeaders } from '../_lib/serve.js';
 import { fetchTelegramFile, getFilePath, isValidFileId } from '../_lib/telegram.js';
 
 export async function onRequest({ request, env, params }) {
@@ -16,11 +17,24 @@ export async function onRequest({ request, env, params }) {
         });
     }
 
-    // /file/<file_id>.<ext>
+    // /file/<file_id>.<ext>, or /file/<video_id>~<thumbnail_id>.<ext> for videos
     const filename = String(params.id);
-    const fileId = filename.split('.')[0];
-    if (!isValidFileId(fileId)) {
+    const [fileId, thumbId] = filename.split('.')[0].split('~');
+    const extension = filename.split('.').pop().toLowerCase();
+    if (!isValidFileId(fileId) || (thumbId !== undefined && !isValidFileId(thumbId))) {
         return new Response('Not found', { status: 404 });
+    }
+
+    // Link-preview bots get the thumbnail through Open Graph tags; the plain
+    // /file/<video_id>.<ext> URL below is what they (and players) fetch as video.
+    const videoType = CONTENT_TYPES_BY_EXTENSION[extension];
+    if (thumbId && videoType && videoType.startsWith('video/') && isCrawler(request)) {
+        return videoPreviewPage({
+            title: 'Shared video',
+            videoUrl: `${url.origin}/file/${fileId}.${extension}`,
+            thumbUrl: `${url.origin}/file/${thumbId}.jpg`,
+            videoType,
+        });
     }
 
     const filePath = await getFilePath(env, fileId);

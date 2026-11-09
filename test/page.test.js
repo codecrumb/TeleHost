@@ -35,6 +35,7 @@ describe('upload page', function () {
     }
 
     let fetchLog;
+    let pageFetch; // optional (url, init) => response, for tests that need the page's fetch to answer
 
     // config: what /config answers (null = the request fails, as if the server were unreachable)
     function makePage(storedSettings, config) {
@@ -46,7 +47,9 @@ describe('upload page', function () {
             beforeParse(win) {
                 win.XMLHttpRequest = FakeXHR;
                 // shorteners fail -> the full URL is kept
-                win.fetch = (url) => {
+                win.fetch = (url, init) => {
+                    const custom = pageFetch && pageFetch(String(url), init);
+                    if (custom) return Promise.resolve(custom);
                     if (String(url) === '/config') {
                         return config ? Promise.resolve(Response.json(config)) : Promise.reject(new Error('offline'));
                     }
@@ -63,6 +66,7 @@ describe('upload page', function () {
 
     beforeEach(function () {
         requests = [];
+        pageFetch = null;
         makePage();
     });
     afterEach(function () { window.close(); });
@@ -481,6 +485,111 @@ describe('upload page', function () {
             requests[0].ok('/file/ID0000.png');
             await tick();
             assert.strictEqual(requests.length, 2);
+        });
+    });
+    describe('pasting a link', function () {
+        let calls;
+        const URL_ = 'https://example.com/pics/cat.jpg';
+        const paste = (text, target) => {
+            const e = new window.Event('paste', { bubbles: true, cancelable: true });
+            e.clipboardData = { items: [], getData: () => text };
+            (target || document.body).dispatchEvent(e);
+            return e;
+        };
+        // What the page's fetch() answers: the server route, and the other site itself.
+        const answer = ({ server, site }) => {
+            calls = [];
+            pageFetch = (url, init) => {
+                if (url === '/fetch-url') { calls.push({ url, body: JSON.parse(init.body) }); return server(); }
+                if (url.startsWith('https://example.com/')) {
+                    calls.push({ url });
+                    if (!site) return Promise.reject(new TypeError('blocked by CORS'));
+                    return { ok: true, headers: { get: () => null }, blob: async () => new window.Blob(['x'.repeat(50)], { type: 'image/jpeg' }) };
+                }
+                return null;
+            };
+        };
+        const serverOk = () => Response.json([{ src: '/file/AAAA1.jpg' }]);
+        const serverNo = () => Response.json({ error: 'failed to get HTTP URL content' }, { status: 500 });
+
+        it('has a tip that shows only where a keyboard is likely, and works everywhere', function () {
+            assert.match(document.getElementById('pasteHint').textContent, /\u2318V|Ctrl\+V/);
+            assert.match(html, /@media \(hover: hover\) and \(pointer: fine\) \{\s*#pasteHint:not\(:empty\)/);
+            assert.match(html, /#pasteHint \{\s*display: none;/);
+        });
+
+        it('lets Telegram fetch it first and puts the link in the history', async function () {
+            answer({ server: serverOk });
+            const e = paste(URL_);
+            assert.ok(e.defaultPrevented);
+            await until(() => history().length === 1);
+            assert.strictEqual(history()[0].url, 'https://host.test/file/AAAA1.jpg');
+            assert.deepStrictEqual(calls.map(c => c.url), ['/fetch-url']);
+            assert.strictEqual(calls[0].body.url, URL_);
+            assert.strictEqual(requests.length, 0, 'nothing was uploaded from the browser');
+        });
+
+        it('sends the chosen expiry along and resets it', async function () {
+            answer({ server: serverOk });
+            document.getElementById('expirySel').value = '3600';
+            paste(URL_);
+            await until(() => calls.length === 1);
+            assert.strictEqual(calls[0].body.expiresIn, '3600');
+            assert.strictEqual(document.getElementById('expirySel').value, '');
+        });
+
+        it('falls back to the browser fetching it, then uploads it as a normal file', async function () {
+            answer({ server: serverNo, site: true });
+            paste(URL_);
+            await until(() => requests.length === 1);
+            assert.deepStrictEqual(calls.map(c => c.url), ['/fetch-url', URL_]);
+            assert.strictEqual(requests[0].body.get('file').name, 'cat.jpg');
+            requests[0].ok('/file/BBBB2.jpg');
+            await until(() => history().length === 1);
+            assert.strictEqual(history()[0].url, 'https://host.test/file/BBBB2.jpg');
+        });
+
+        it('names an extension-less link after its content type', async function () {
+            answer({ server: serverNo, site: true });
+            paste('https://example.com/get/12345');
+            await until(() => requests.length === 1);
+            assert.strictEqual(requests[0].body.get('file').name, '12345.jpg');
+        });
+
+        it('tells the user to download it themselves when both ways fail', async function () {
+            answer({ server: serverNo, site: false });
+            paste(URL_);
+            await until(() => rows().length === 1 && /Couldn't fetch that link/.test(label(0)));
+            assert.strictEqual(requests.length, 0);
+            assert.ok(!rows()[0].querySelector('.job-retry').hidden, 'it can be retried');
+        });
+
+        it('skips Telegram for password links, since only the browser can encrypt', async function () {
+            answer({ server: serverOk, site: true });
+            document.getElementById('passwordInput').value = 'hunter2';
+            paste(URL_);
+            await until(() => requests.length === 1);
+            assert.deepStrictEqual(calls.map(c => c.url), [URL_], '/fetch-url was never called');
+            assert.ok(requests[0].body.get('encSalt'), 'sent encrypted');
+        });
+
+        it('takes several links at once', async function () {
+            answer({ server: serverOk });
+            paste(URL_ + '\nhttps://example.com/b.png');
+            await until(() => history().length === 2 || calls.length === 2);
+            assert.deepStrictEqual(calls.map(c => c.body.url), [URL_, 'https://example.com/b.png']);
+        });
+
+        it('ignores plain text, mixed text and anything pasted into a field', async function () {
+            answer({ server: serverOk });
+            for (const text of ['hello', 'see ' + URL_, 'ftp://example.com/a', 'javascript:alert(1)']) {
+                assert.ok(!paste(text).defaultPrevented, text);
+            }
+            const pw = document.getElementById('passwordInput');
+            assert.ok(!paste(URL_, pw).defaultPrevented);
+            await tick(30);
+            assert.strictEqual(rows().length, 0);
+            assert.strictEqual(calls.length, 0);
         });
     });
 });

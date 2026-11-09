@@ -2,7 +2,7 @@ import { authenticateUpload } from './_lib/auth.js';
 import { linkSecret, signReceipt, signRenderLink } from './_lib/manifest.js';
 import { checkEncryption, checkExpiry, cleanMeta, htmlRenderEnabled } from './_lib/options.js';
 import { checkUploadOrigin, preflight, refusal, withCors } from './_lib/origin.js';
-import { RateLimitedError, createManifestLink, failure, getFileId, sendToTelegram } from './_lib/send.js';
+import { RateLimitedError, createManifestLink, failure, getFileId, sendToTelegram, uploaderCaption } from './_lib/send.js';
 
 // Web pages on other sites may only upload if listed (see _lib/origin.js).
 export async function onRequestPost(context) {
@@ -171,16 +171,6 @@ async function handleUpload(context) {
             }
         );
     }
-}
-
-// Off unless LOG_UPLOADER_IP=true. The IP comes from Cloudflare's own header,
-// never from client-controlled ones like X-Forwarded-For.
-function uploaderCaption(request, env) {
-    if (String(env.LOG_UPLOADER_IP).toLowerCase() !== 'true') return null;
-    const ip = request.headers.get('CF-Connecting-IP');
-    if (!ip) return null;
-    const country = request.cf && request.cf.country;
-    return country ? `Uploader: ${ip} (${country})` : `Uploader: ${ip}`;
 }
 
 // Form fields -> validated encryption info, or null for a normal upload.

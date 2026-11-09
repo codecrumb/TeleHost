@@ -82,3 +82,13 @@ export async function createManifestLink(env, manifest) {
     if (!manifestId) throw new Error('Failed to create link');
     return manifestId;
 }
+
+// Off unless LOG_UPLOADER_IP=true. The IP comes from Cloudflare's own header,
+// never from client-controlled ones like X-Forwarded-For.
+export function uploaderCaption(request, env) {
+    if (String(env.LOG_UPLOADER_IP).toLowerCase() !== 'true') return null;
+    const ip = request.headers.get('CF-Connecting-IP');
+    if (!ip) return null;
+    const country = request.cf && request.cf.country;
+    return country ? `Uploader: ${ip} (${country})` : `Uploader: ${ip}`;
+}

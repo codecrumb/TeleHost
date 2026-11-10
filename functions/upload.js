@@ -1,6 +1,6 @@
 import { authenticateUpload } from './_lib/auth.js';
 import { linkSecret, signReceipt, signRenderLink } from './_lib/manifest.js';
-import { checkEncryption, checkExpiry, cleanMeta, htmlRenderEnabled } from './_lib/options.js';
+import { checkEncryption, checkExpiry, cleanMeta, htmlRenderEnabled, safeExtension } from './_lib/options.js';
 import { checkUploadOrigin, preflight, refusal, withCors } from './_lib/origin.js';
 import { RateLimitedError, createManifestLink, failure, getFileId, sendToTelegram, uploaderCaption } from './_lib/send.js';
 
@@ -45,7 +45,7 @@ async function handleUpload(context) {
         const wantsRender = formData.get('render') === '1';
 
         const fileName = uploadFile.name;
-        const fileExtension = fileName.split('.').pop().toLowerCase();
+        const fileExtension = safeExtension(fileName);
 
         // Opening HTML in the browser: only for a plain upload, when asked and allowed.
         const renderLink = wantsRender && !expiresIn && !enc && !formData.get('part') &&

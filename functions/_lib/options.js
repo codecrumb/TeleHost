@@ -4,6 +4,13 @@
 // Rendering uploaded HTML in the browser is opt-in for the operator: ALLOW_HTML_RENDER=true.
 export const htmlRenderEnabled = env => String(env.ALLOW_HTML_RENDER).toLowerCase() === 'true';
 
+// The extension that goes into a /file or /s link: letters and digits only, so a
+// crafted file name can never put odd characters or path segments in the link.
+export function safeExtension(name, fallback = 'bin') {
+    const ext = String(name).includes('.') ? String(name).split('.').pop().toLowerCase() : '';
+    return /^[a-z0-9]{1,8}$/.test(ext) ? ext : fallback;
+}
+
 export const MAX_EXPIRY_SECONDS = 30 * 24 * 60 * 60;
 
 // Seconds until the link expires; null when the upload has no expiry.

@@ -1,6 +1,6 @@
 import { authenticateUpload } from './_lib/auth.js';
 import { linkSecret } from './_lib/manifest.js';
-import { checkExpiry } from './_lib/options.js';
+import { checkExpiry, safeExtension } from './_lib/options.js';
 import { checkUploadOrigin, preflight, refusal, withCors } from './_lib/origin.js';
 import { RateLimitedError, createManifestLink, failure, getFileId, sendToTelegram, uploaderCaption } from './_lib/send.js';
 
@@ -74,8 +74,7 @@ async function handleFetch({ request, env }) {
         // Telegram may turn a video or audio link into a video/audio message instead of a document.
         const doc = result.data.result.document || result.data.result.video || result.data.result.audio || {};
         const fileName = String(doc.file_name || new URL(link).pathname.split('/').pop() || 'file').slice(0, 255);
-        const named = fileName.includes('.') ? fileName.split('.').pop().toLowerCase() : '';
-        const extension = /^[a-z0-9]{1,8}$/.test(named) ? named : (EXTENSION_BY_MIME[doc.mime_type] || 'bin');
+        const extension = safeExtension(fileName, EXTENSION_BY_MIME[doc.mime_type] || 'bin');
 
         if (expiresIn) {
             const manifest = {

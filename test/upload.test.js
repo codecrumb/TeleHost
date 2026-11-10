@@ -120,3 +120,29 @@ describe('Telegram rate limiting', function () {
         assert.strictEqual(res2.status, 429);
     });
 });
+
+describe('/upload link extension', function () {
+    const realFetch = global.fetch;
+    beforeEach(function () {
+        global.fetch = async () => Response.json({ ok: true, result: { document: { file_id: 'F'.repeat(30) } } });
+    });
+    afterEach(function () { global.fetch = realFetch; });
+
+    async function srcFor(name) {
+        const { onRequestPost } = await import('../functions/upload.js');
+        const body = new FormData();
+        body.append('file', new File(['hi'], name, { type: 'text/plain' }));
+        const res = await onRequestPost({ request: new Request('https://x.test/upload', { method: 'POST', body }), env: { TG_Bot_Token: 't', TG_Chat_ID: '-1' } });
+        return (await res.json())[0].src;
+    }
+
+    it('keeps a normal extension, lower-cased', async function () {
+        assert.strictEqual(await srcFor('Photo.JPG'), `/file/${'F'.repeat(30)}.jpg`);
+    });
+
+    it('never lets a crafted name put odd characters or path segments in the link', async function () {
+        for (const name of ['x.<b>', 'x.y/../../v/abc', 'x.%2e%2e', 'README', 'archive.verylongext', 'x.\u05e2\u05d1']) {
+            assert.strictEqual(await srcFor(name), `/file/${'F'.repeat(30)}.bin`, name);
+        }
+    });
+});
